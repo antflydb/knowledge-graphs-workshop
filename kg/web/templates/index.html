@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Core dataset graph search</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+body { max-width: 1160px; margin: 1.5rem auto; padding: 0 1rem 4rem; }
+h1,h2,h3 { line-height: 1.2; } label { display: block; margin: .6rem 0; }
+select,button,input,textarea { font: inherit; padding: .4rem; } textarea { width: 100%; box-sizing: border-box; }
+button { cursor: pointer; } button:disabled { cursor: wait; } .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: end; }
+.row label { flex: 1; min-width: 12rem; } .notice { border-left: 4px solid #7e8c99; padding: .5rem 1rem; }
+.error { color: light-dark(#a21b1b,#ffb3b3); } .muted { color: light-dark(#4d5964,#b3bec9); }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: light-dark(#f2f4f6,#202830); padding: .8rem; max-height: 34rem; overflow: auto; }
+.card { border: 1px solid #89949f; border-radius: .3rem; margin: 1rem 0; padding: 1rem; }
+.passage { white-space: pre-wrap; overflow-wrap: anywhere; } details { margin: .7rem 0; } summary { cursor: pointer; }
+a { color: light-dark(#165a98,#8dc7ff); } .graph-wrap { overflow: auto; border: 1px solid #89949f; }
+svg { display: block; width: 100%; min-width: 720px; background: light-dark(#fafbfd,#151c23); }
+svg .node rect { fill: light-dark(#e5edf7,#263d54); stroke: light-dark(#3e5267,#b1c4d8); }
+svg .node.query rect { fill: light-dark(#efe7fc,#4a345e); }
+svg .node.passage rect { fill: light-dark(#e2f0e4,#284b35); }
+svg text { fill: light-dark(#17212b,#eef4fa); font: 12px system-ui,sans-serif; }
+svg .edge path { stroke: light-dark(#657482,#b9c7d5); stroke-width: 1.5; fill: none; }
+svg .edge.semantic path { stroke: light-dark(#a14f16,#f7b16b); stroke-width: 2; }
+svg .edge.mention path { stroke-dasharray: 4 3; }
+svg .edge text { paint-order: stroke; stroke: light-dark(#fafbfd,#151c23); stroke-width: 4px; stroke-linejoin: round; }
+svg .node,svg .edge { cursor: pointer; } svg :focus { outline: 3px solid #aa7c12; }
+#status { white-space: pre-wrap; } .experiment { border-top: 1px solid #89949f; padding-top: .6rem; }
+</style>
+</head>
+<body>
+<h1>Core dataset graph search</h1>
+<p class="notice">Local model-backed evidence, not verified facts. Entity nodes group normalized type + surface text; they do not establish identity. Directed relationships are model predictions. Decide can only differentiate pairs proposed by extraction.</p>
+<form id="search-form">
+<div class="row">
+<label>Dataset <select id="dataset"><option value="asoiaf">ASoIaF</option><option value="pizza-portland">Portland pizza</option><option value="apollo13">Apollo 13</option></select></label>
+<label>Runtime track <select id="track"><option value="stable">stable · Python / Antfly v0.2.5</option><option value="latest">latest · native main (requires qualified build/service)</option></select></label>
+</div>
+<label>Query <input id="query" style="width:100%;box-sizing:border-box" required value="Who is Tyrion Lannister's father?"></label>
+<button id="search-button" type="submit">Search</button>
+</form>
+<p id="status" role="status" aria-live="polite">Choose a dataset and search. Graph is the default retrieval mode.</p>
+<main id="search-output" hidden>
+<h2 id="search-title">Last successful search</h2>
+<pre id="timings"></pre>
+<details><summary>Transient query: saved extraction, proposals, decisions and assertions</summary><pre id="query-analysis"></pre></details>
+<h2>Query and evidence graph</h2>
+<p>Dashed edges are distinct mention occurrences; solid arrows are directed model predicates. Click or keyboard-activate a node or edge to inspect its record and cited evidence.</p>
+<p id="graph-counts" class="muted"></p>
+<div class="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Query and retrieved evidence graph"></svg></div>
+<details id="inspector"><summary>Selected graph record and evidence</summary><pre id="inspection">Select a node or edge.</pre></details>
+<h2>Ranked cited evidence</h2>
+<div id="results"></div>
+<details id="experiment-panel">
+<summary>Optional fresh-question Decide experiment (independent of retrieval)</summary>
+<p id="experiment-context"></p>
+<p>This separately classifies the last successful query against each selected passage and both complete model graphs. It does not reorder results or add graph facts. Scores are not calibrated truth. The compiled model has a 512-token/request limit: oversized inputs fail visibly, without truncation. Choose a shorter passage when needed.</p>
+<form id="experiment-form">
+<label>Instruction <textarea id="instruction" rows="4" required></textarea></label>
+<label>Label descriptions (JSON object, at least two unique labels) <textarea id="labels" rows="7" spellcheck="false" required></textarea></label>
+<label>Result count <select id="result-count"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select> (or choose up to three evidence cards above)</label>
+<button id="decide-button" type="submit">Run Decide on selected evidence</button>
+</form>
+<p id="experiment-status" role="status" aria-live="polite"></p>
+<div id="experiments"></div>
+</details>
+</main>
+<script id="defaults" type="application/json">{{ defaults | tojson }}</script>
+<script>
+'use strict';
+const defaults = JSON.parse(document.getElementById('defaults').textContent);
+const $ = id => document.getElementById(id);
+const json = value => JSON.stringify(value, null, 2);
+let lastSearch = null, busy = false, runNumber = 0;
+const edits = new Map();
+function element(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (cls) node.className = cls;
+  return node;
+}
+function setBusy(value) {
+  busy = value;
+  $('search-button').disabled = value;
+  $('decide-button').disabled = value;
+}
+function saveEdits() {
+  if (lastSearch) edits.set(lastSearch.dataset, {instruction: $('instruction').value, labels: $('labels').value});
+}
+$('instruction').addEventListener('input', saveEdits);
+$('labels').addEventListener('input', saveEdits);
+async function post(url, data) {
+  const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+  const text = await response.text();
+  let packet;
+  try { packet = JSON.parse(text); } catch { packet = {error: text || response.statusText}; }
+  return {ok: response.ok, status: response.status, packet};
+}
+function errorText(packet) {
+  if (typeof packet.error === 'string') return packet.error;
+  if (typeof packet.detail === 'string') return packet.detail;
+  return json(packet.detail || packet);
+}
+function externalLink(url, text) {
+  if (typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    const link = element('a', text); link.href = parsed.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; return link;
+  } catch { return null; }
+}
+function citationView(citation, sourceId, datasetName) {
+  const box = element('div');
+  box.append(element('p', citation.title || sourceId || 'Source'));
+  const links = element('p');
+  const raw = element('a', 'Inspect raw Markdown');
+  raw.href = '/raw/' + encodeURIComponent(datasetName) + '/' + encodeURIComponent(sourceId || citation.id);
+  raw.target = '_blank'; raw.rel = 'noopener'; links.append(raw);
+  for (const [key, title] of [['url','Original source'],['revision_url','Exact revision'],['download_url','Download origin']]) {
+    const link = externalLink(citation[key], title);
+    if (link) { links.append(document.createTextNode(' · ')); links.append(link); }
+  }
+  box.append(links);
+  const detail = element('details'); detail.append(element('summary', 'Citation, offsets and provenance'), element('pre', json(citation))); box.append(detail);
+  return box;
+}
+function selectedPassages() {
+  return [...document.querySelectorAll('input.passage-choice:checked')].map(input => input.value);
+}
+function synchronizeCount() {
+  const count = selectedPassages().length;
+  if (count) $('result-count').value = String(count);
+}
+function renderResults(packet) {
+  $('results').replaceChildren();
+  if (!packet.results.length) $('results').append(element('p', 'No evidence was returned. No evidence is fabricated.'));
+  packet.results.forEach((row, index) => {
+    const card = element('article', undefined, 'card'); card.id = 'result-' + index;
+    card.append(element('h3', `${index + 1}. ${row.citation.title || row.passage_id}`));
+    card.append(element('p', `Passage ${row.passage_id} · retrieval score ${row.score ?? 'not supplied'}`, 'muted'));
+    card.append(element('p', row.text, 'passage'));
+    card.append(citationView(row.citation, row.source_id, lastSearch.dataset));
+    const detail = element('details'); detail.append(element('summary', 'Stored passage analysis: NER, proposals, decisions and assertions'), element('pre', json(row.analysis))); card.append(detail);
+    const label = element('label'); const choice = element('input'); choice.type = 'checkbox'; choice.className = 'passage-choice'; choice.value = row.passage_id; choice.checked = index === 0;
+    choice.addEventListener('change', () => {
+      if (selectedPassages().length > 3) { choice.checked = false; $('experiment-status').textContent = 'Choose at most three passages.'; }
+      synchronizeCount();
+    });
+    label.append(choice, document.createTextNode(' Include in optional Decide experiment')); card.append(label); $('results').append(card);
+  });
+  $('result-count').value = '1';
+}
+function evidenceFor(owner) {
+  if (owner === 'query') return lastSearch.packet.query;
+  return lastSearch.packet.results.find(row => row.passage_id === owner) || null;
+}
+function inspect(record, links) {
+  const owners = new Set();
+  for (const edge of links) {
+    if (edge.evidence) owners.add(edge.evidence);
+    if (edge.predicate === 'mentions') owners.add(edge.source);
+  }
+  if (record.kind === 'query' || record.kind === 'passage') owners.add(record.id);
+  $('inspection').textContent = json({record, links, evidence: [...owners].map(evidenceFor).filter(Boolean)});
+  $('inspector').open = true;
+}
+const SVG = 'http://www.w3.org/2000/svg';
+function svgElement(tag, attrs = {}, text) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function activate(node, action) {
+  node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button');
+  node.addEventListener('click', action);
+  node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); action(); } });
+}
+function renderGraph(graph) {
+  const svg = $('graph'); svg.replaceChildren();
+  const nodes = graph.nodes || [], edges = graph.edges || [];
+  const columns = Math.min(5, Math.max(1, nodes.length));
+  const height = Math.max(360, Math.ceil(nodes.length / columns) * 120 + 70);
+  svg.setAttribute('viewBox', `0 0 1100 ${height}`);
+  const defs = svgElement('defs'), marker = svgElement('marker', {id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse'});
+  marker.append(svgElement('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: '#a77b4e'})); defs.append(marker); svg.append(defs);
+  const positions = new Map();
+  nodes.forEach((node, index) => positions.set(node.id, {x: 110 + (index % columns) * (880 / Math.max(1, columns - 1)), y: 70 + Math.floor(index / columns) * 120}));
+  edges.forEach((edge, index) => {
+    const start = positions.get(edge.source), end = positions.get(edge.target); if (!start || !end) return;
+    const mention = edge.predicate === 'mentions';
+    const group = svgElement('g', {class: 'edge ' + (mention ? 'mention' : 'semantic'), 'aria-label': `${edge.source} ${edge.predicate} ${edge.target}`});
+    const offset = ((index % 7) - 3) * 13;
+    let path, tx, ty;
+    if (edge.source === edge.target) {
+      path = `M ${start.x - 20} ${start.y - 20} C ${start.x - 100} ${start.y - 90} ${start.x + 100} ${start.y - 90} ${start.x + 20} ${start.y - 20}`;
+      tx = start.x; ty = start.y - 65;
+    } else {
+      const dx = end.x - start.x, dy = end.y - start.y, length = Math.hypot(dx, dy) || 1;
+      const sx = start.x + dx / length * 35, sy = start.y + dy / length * 23;
+      const ex = end.x - dx / length * 40, ey = end.y - dy / length * 25;
+      const cx = (sx + ex) / 2 - dy / length * offset, cy = (sy + ey) / 2 + dx / length * offset;
+      path = `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`;
+      tx = (sx + 2 * cx + ex) / 4; ty = (sy + 2 * cy + ey) / 4 - 3;
+    }
+    group.append(svgElement('path', {d: path, 'marker-end': 'url(#arrow)'}), svgElement('text', {x: tx, y: ty, 'text-anchor': 'middle'}, edge.predicate));
+    group.append(svgElement('title', {}, `${edge.id}: ${edge.predicate}`));
+    activate(group, () => inspect(edge, [edge])); svg.append(group);
+  });
+  nodes.forEach(node => {
+    const {x,y} = positions.get(node.id), group = svgElement('g', {class: 'node ' + node.kind, 'aria-label': `${node.kind}: ${node.text}`});
+    group.append(svgElement('rect', {x: x - 88, y: y - 24, width: 176, height: 48, rx: 6}));
+    const title = node.kind === 'query' ? 'Query' : node.kind === 'passage' ? 'Evidence ' + (lastSearch.packet.results.findIndex(row => row.passage_id === node.id) + 1) : node.text;
+    group.append(svgElement('text', {x, y: y - 2, 'text-anchor': 'middle'}, title.length > 24 ? title.slice(0, 23) + '…' : title));
+    group.append(svgElement('text', {x, y: y + 15, 'text-anchor': 'middle'}, node.label || node.kind));
+    group.append(svgElement('title', {}, `${node.text} (${node.label || node.kind})`));
+    activate(group, () => inspect(node, edges.filter(edge => edge.source === node.id || edge.target === node.id))); svg.append(group);
+  });
+  $('graph-counts').textContent = `${nodes.length} nodes / ${edges.length} edges displayed. Omitted: ${graph.omitted_nodes || 0} nodes / ${graph.omitted_edges || 0} edges (limits: 50 / 100).`;
+}
+$('search-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (busy) return;
+  const selection = {dataset: $('dataset').value, track: $('track').value, text: $('query').value};
+  setBusy(true); $('status').className = ''; $('status').textContent = 'Running complete query analysis and retrieval…';
+  try {
+    const response = await post('/api/search', selection);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${errorText(response.packet)}`);
+    saveEdits(); lastSearch = {...selection, packet: response.packet};
+    const packet = response.packet, saved = edits.get(selection.dataset), configured = defaults[selection.dataset].query_decision;
+    $('instruction').value = saved ? saved.instruction : configured.instruction;
+    $('labels').value = saved ? saved.labels : json(configured.labels);
+    $('search-output').hidden = false;
+    $('search-title').textContent = `${defaults[selection.dataset].title} / ${selection.track} — ${selection.text}`;
+    $('status').textContent = `Build ${packet.build_id}${packet.partial ? ' · PARTIAL BUILD: selected passages only' : ' · complete selection'}\n${packet.results.length} ranked evidence passages. Query graph is transient and was not indexed.`;
+    $('timings').textContent = json(packet.timings); $('query-analysis').textContent = json(packet.query.analysis);
+    $('experiment-context').textContent = `Uses last successful search: ${selection.dataset} / ${selection.track} — ${packet.query.text}`;
+    $('experiment-status').textContent = ''; $('experiments').replaceChildren(); $('inspection').textContent = 'Select a node or edge.'; $('inspector').open = false;
+    renderResults(packet); renderGraph(packet.graph);
+  } catch (error) {
+    $('status').className = 'error'; $('status').textContent = `${error.message}${lastSearch ? '\nPrevious successful results and experiment edits are retained below.' : ''}`;
+  } finally { setBusy(false); }
+});
+$('result-count').addEventListener('change', () => {
+  const count = Number($('result-count').value);
+  document.querySelectorAll('input.passage-choice').forEach((input, index) => { input.checked = index < count; });
+});
+$('experiment-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (busy || !lastSearch) return;
+  saveEdits();
+  const passages = selectedPassages();
+  if (passages.length < 1 || passages.length > 3) { $('experiment-status').textContent = 'Choose one to three evidence cards.'; return; }
+  let labels;
+  try { labels = JSON.parse($('labels').value); }
+  catch (error) { $('experiment-status').textContent = 'Label JSON is invalid: ' + error.message + '. Edits and prior results are retained.'; return; }
+  const request = {dataset: lastSearch.dataset, track: lastSearch.track, text: lastSearch.packet.query.text, build_id: lastSearch.packet.build_id, instruction: $('instruction').value, labels};
+  const run = element('section', undefined, 'card'); runNumber += 1; run.append(element('h3', `Experiment run ${runNumber}`)); $('experiments').append(run);
+  setBusy(true);
+  let failures = 0;
+  try {
+    // Each passage is an independent request; one failure never discards another outcome.
+    for (let index = 0; index < passages.length; index += 1) {
+      const passageId = passages[index];
+      $('experiment-status').textContent = `Scoring passage ${index + 1} of ${passages.length} serially…`;
+      const output = element('article', undefined, 'experiment'); output.append(element('h3', passageId)); run.append(output);
+      try {
+        const response = await post('/api/decide', {...request, passage_id: passageId});
+        const packet = response.packet;
+        if (!response.ok) { failures += 1; output.append(element('p', `HTTP ${response.status}: ${errorText(packet)}`, 'error')); }
+        else output.append(element('p', `Model label: ${packet.label} (not verified truth)`));
+        if (packet.citation) output.append(citationView(packet.citation, packet.citation.id, request.dataset));
+        output.append(element('pre', json({label: packet.label, scores: packet.scores, timings: packet.timings})));
+        const detail = element('details'); detail.open = !response.ok;
+        detail.append(element('summary', 'Exact complete serialized input, instruction and candidate descriptions'));
+        if (typeof packet.input === 'string') detail.append(element('pre', packet.input));
+        detail.append(element('pre', json({instruction: packet.instruction ?? request.instruction, labels: packet.labels ?? request.labels})));
+        output.append(detail);
+        if (!packet.input && !response.ok) output.append(element('p', 'No classifier input was available: the request failed before passage resolution or serialization.'));
+      } catch (error) { failures += 1; output.append(element('p', error.message, 'error')); }
+    }
+    $('experiment-status').textContent = `Finished ${passages.length} independent requests; ${failures} failed. All outcomes, complete returned inputs and your edits are retained. Retrieval order is unchanged.`;
+  } finally { setBusy(false); }
+});
+</script>
+</body>
+</html>

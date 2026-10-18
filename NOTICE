@@ -1,0 +1,42 @@
+Licensing scope and third-party material
+
+The MIT license in LICENSE applies to this project's original code and
+project-authored documentation. It does not relicense source datasets,
+quotations within them, model weights, dependencies, or Antfly itself.
+
+Wikipedia / ASoIaF
+The 56 Markdown articles under datasets/asoiaf/raw/ are attributed adaptations
+of English Wikipedia prose by Wikipedia contributors, provided under Creative
+Commons Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+For each article, datasets/asoiaf/metadata.jsonl preserves the title, article
+and revision URLs, attribution, license, license notice and modifications.
+The normalized prose omits elements such as navigation, infoboxes and tables;
+existing normalized bodies are otherwise preserved byte-for-byte. Keep the
+per-file metadata with redistributed text and comply with the CC BY-SA terms
+for adaptations. Quotations may have rights distinct from surrounding prose;
+no additional rights in third-party quotations are granted by this project.
+
+Apollo 13
+The two Markdown files under datasets/apollo13/raw/ contain NASA-supplied
+US Government mission transcript and Review Board main-report text.
+datasets/apollo13/metadata.jsonl records the exact NASA download URLs, hashes,
+attribution, transcript bounds and normalization, including Heiko Kueffen's
+formatter credit for the supplied transcript. No NASA endorsement is implied;
+no NASA logos, images, audio or video are bundled. These source records are
+not covered by the project's MIT grant.
+
+Portland pizza
+No redistribution permission has been verified for the restaurant menu/about
+text. Only configuration and source metadata are included in this repository.
+datasets/pizza-portland/raw/ and generated graphs containing this material
+must remain local and must not be added to public commits or releases.
+
+Models and dependencies
+No model weights are bundled. Model, dependency and Antfly licenses apply
+separately. Download instructions and immutable model pins do not grant any
+additional redistribution or hosted-service rights.
+
+See README.md, datasets/README.md and the per-dataset metadata.jsonl files for
+source origins, exact provenance, coverage limits and redistribution status.

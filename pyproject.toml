@@ -1,0 +1,36 @@
+[project]
+name = "kg"
+version = "0.1.0"
+description = "Model-derived knowledge graphs and interactive search over attributed workshop datasets"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "beautifulsoup4>=4.12",
+    "pypdf>=6,<7",
+]
+
+[project.optional-dependencies]
+workshop = [
+    "gliner2 @ git+https://github.com/fastino-ai/GLiNER2.git@55656fbfa01d3d4a77485e1a1eeeaf682990ccdf",
+    "transformers @ git+https://github.com/huggingface/transformers.git@92cd495f2720c064bc78eb2d93e28704c5bce51f",
+    "torch==2.14.0",
+    "peft==0.20.0",
+    "numpy==2.3.5",
+    "safetensors==0.8.0",
+    "tokenizers==0.23.1",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kg"]

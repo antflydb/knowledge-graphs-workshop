@@ -1,0 +1,270 @@
+version: 2
+passages:
+  max_bytes: 550
+  max_words: 75
+  overlap_words: 10
+models:
+  extract: fastino/gliner2.5-base-v1
+  embed: google/embeddinggemma-2
+  decide: fastino/GLiNER2.5-Decide
+revisions:
+  extract: 72ac19b486cd4557424c8d61114e7530c243e9b0
+  embed: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  decide: 7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6
+dimensions: 768
+retrieval:
+  candidates: 40
+  graph_candidates: 100
+  evidence: 5
+  text_reserve: 1
+tracks:
+  stable:
+    target: v0.2.5
+    provider: python
+    addr: 127.0.0.1:8795
+    health_port: 4295
+    binary_env: ANTFLY_STABLE_BIN
+    database: ../../data/antfly/stable/graph.aflite
+  latest:
+    target: v0.3.0/main
+    provider: antfly
+    addr: 127.0.0.1:8796
+    health_port: 4296
+    binary_env: ANTFLY_LATEST_BIN
+    database: ../../data/antfly/latest/graph.aflite
+    source_commit: c102cbeac5ae8911ffe6a13105731f381285bfc2
+    distributable: false
+    inference_url: http://127.0.0.1:8090
+dataset: pizza-portland
+title: Eleven Portland Oregon pizza places
+corpus: metadata.jsonl
+output: ../../data/builds/pizza-portland
+extraction:
+  entities:
+  - restaurant
+  - location
+  - menu_item
+  - ingredient
+  - dietary_option
+  - pizza_style
+  threshold: 0.5
+  relations:
+    located_in:
+      description: HEAD restaurant is located at TAIL location.
+      head_types:
+      - restaurant
+      tail_types:
+      - location
+    serves:
+      description: HEAD restaurant serves TAIL menu item.
+      head_types:
+      - restaurant
+      tail_types:
+      - menu_item
+    contains_ingredient:
+      description: HEAD menu item contains TAIL ingredient.
+      head_types:
+      - menu_item
+      tail_types:
+      - ingredient
+    has_dietary_option:
+      description: HEAD restaurant or menu item explicitly offers TAIL dietary option.
+      head_types:
+      - restaurant
+      - menu_item
+      tail_types:
+      - dietary_option
+    has_style:
+      description: HEAD restaurant or menu item has TAIL pizza style.
+      head_types:
+      - restaurant
+      - menu_item
+      tail_types:
+      - pizza_style
+relation_decision:
+  instruction: Choose the explicitly supported directed HEAD-to-TAIL relationship.
+    Do not infer ingredients, dietary or allergen safety from absence. Do not derive
+    ownership from branding or metadata. Source context is provenance, not additional
+    facts.
+query_decision:
+  instruction: Judge whether the passage explicitly addresses the query’s menu requirements.
+    Do not infer dietary/allergen safety or availability from absence.
+  labels:
+    relevant: Explicit menu evidence addresses the query requirements.
+    not_relevant: The passage concerns other menu items or requirements.
+    unclear: The requested menu requirement is not established.
+  results: 1
+collection:
+  kind: restaurant_pages
+  user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)
+  request_interval_seconds: 2
+  sources:
+  - id: pizza:apizza-scholls:menu
+    path: raw/apizza-scholls-menu.md
+    title: Apizza Scholls — menu
+    url: https://www.apizzascholls.com/Menus/
+    format: html
+    restaurant_id: apizza-scholls
+    roles:
+    - menu
+  - id: pizza:apizza-scholls:about
+    path: raw/apizza-scholls-about.md
+    title: Apizza Scholls — about/location
+    url: https://www.apizzascholls.com/
+    format: html
+    restaurant_id: apizza-scholls
+    roles:
+    - about
+  - id: pizza:kens-artisan:menu
+    path: raw/kens-artisan-menu.md
+    title: Ken’s Artisan Pizza — menu and about
+    url: https://kensartisanpizza.com/pizza
+    format: html
+    restaurant_id: kens-artisan
+    roles:
+    - menu
+    - about
+  - id: pizza:hotlips:menu
+    path: raw/hotlips-menu.md
+    title: HOTLIPS Hawthorne — menu
+    url: https://www.hotlipspizza.com/menu
+    format: html
+    restaurant_id: hotlips
+    roles:
+    - menu
+  - id: pizza:hotlips:about
+    path: raw/hotlips-about.md
+    title: HOTLIPS Hawthorne — about/location
+    url: https://www.hotlipspizza.com/hawthorne
+    format: html
+    restaurant_id: hotlips
+    roles:
+    - about
+  - id: pizza:life-of-pie:menu
+    path: raw/life-of-pie-menu.md
+    title: Life of Pie — menu
+    url: https://lifeofpiepizza.com/pdfs/Menu-Life_Of_Pie.pdf
+    format: pdf
+    restaurant_id: life-of-pie
+    roles:
+    - menu
+  - id: pizza:life-of-pie:about
+    path: raw/life-of-pie-about.md
+    title: Life of Pie — about/location
+    url: https://lifeofpiepizza.com/
+    format: html
+    restaurant_id: life-of-pie
+    roles:
+    - about
+  - id: pizza:red-sauce:menu
+    path: raw/red-sauce-menu.md
+    title: Red Sauce Pizza — menu
+    url: https://www.redsaucepizza.com/menu
+    format: html
+    restaurant_id: red-sauce
+    roles:
+    - menu
+  - id: pizza:red-sauce:about
+    path: raw/red-sauce-about.md
+    title: Red Sauce Pizza — about/location
+    url: https://www.redsaucepizza.com/
+    format: html
+    restaurant_id: red-sauce
+    roles:
+    - about
+  - id: pizza:double-mountain:menu
+    path: raw/double-mountain-menu.md
+    title: Double Mountain Woodstock — menu
+    url: https://doublemountainbrewery.com/wp-content/uploads/2026/10/WS_Menu_10_16_26.pdf
+    format: pdf
+    restaurant_id: double-mountain
+    roles:
+    - menu
+  - id: pizza:double-mountain:about
+    path: raw/double-mountain-about.md
+    title: Double Mountain Woodstock — about/location
+    url: https://doublemountainbrewery.com/woodstock/
+    format: html
+    restaurant_id: double-mountain
+    roles:
+    - about
+  - id: pizza:blind-onion:menu
+    path: raw/blind-onion-menu.md
+    title: The Blind Onion — menu
+    url: https://www.blindonion.com/house.html
+    format: html
+    restaurant_id: blind-onion
+    roles:
+    - menu
+  - id: pizza:blind-onion:about
+    path: raw/blind-onion-about.md
+    title: The Blind Onion — about/location
+    url: https://www.blindonion.com/index.html
+    format: html
+    restaurant_id: blind-onion
+    roles:
+    - about
+  - id: pizza:mississippi-pizza:menu
+    path: raw/mississippi-pizza-menu.md
+    title: Mississippi Pizza — menu
+    url: https://mississippipizza.com/mississippi-pizza-menu/
+    format: html
+    restaurant_id: mississippi-pizza
+    roles:
+    - menu
+  - id: pizza:mississippi-pizza:about
+    path: raw/mississippi-pizza-about.md
+    title: Mississippi Pizza — about/location
+    url: https://mississippipizza.com/about-mississippi-pizza/
+    format: html
+    restaurant_id: mississippi-pizza
+    roles:
+    - about
+  - id: pizza:stark-street:menu
+    path: raw/stark-street-menu.md
+    title: Stark Street Pizza — menu
+    url: https://www.starkstreetpizza.com/stark-street-menu.pdf
+    format: pdf
+    restaurant_id: stark-street
+    roles:
+    - menu
+  - id: pizza:stark-street:about
+    path: raw/stark-street-about.md
+    title: Stark Street Pizza — about/location
+    url: https://www.starkstreetpizza.com/
+    format: html
+    restaurant_id: stark-street
+    roles:
+    - about
+  - id: pizza:pizza-thief:menu
+    path: raw/pizza-thief-menu.md
+    title: Pizza Thief NW Vaughn — menu
+    url: https://pizzathief.com/menu/
+    format: html
+    restaurant_id: pizza-thief
+    roles:
+    - menu
+  - id: pizza:pizza-thief:about
+    path: raw/pizza-thief-about.md
+    title: Pizza Thief NW Vaughn — about/location
+    url: https://pizzathief.com/
+    format: html
+    restaurant_id: pizza-thief
+    roles:
+    - about
+  - id: pizza:amalfis:menu
+    path: raw/amalfis-menu.md
+    title: Amalfi’s — menu
+    url: https://www.amalfisrestaurant.com/pdf/dinner-menu.pdf
+    format: pdf
+    restaurant_id: amalfis
+    roles:
+    - menu
+  - id: pizza:amalfis:about
+    path: raw/amalfis-about.md
+    title: Amalfi’s — about/location
+    url: https://www.amalfisrestaurant.com/
+    format: html
+    restaurant_id: amalfis
+    roles:
+    - about

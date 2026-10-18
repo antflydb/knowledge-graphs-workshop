@@ -1,0 +1,131 @@
+version: 2
+passages:
+  max_bytes: 550
+  max_words: 75
+  overlap_words: 10
+models:
+  extract: fastino/gliner2.5-base-v1
+  embed: google/embeddinggemma-2
+  decide: fastino/GLiNER2.5-Decide
+revisions:
+  extract: 72ac19b486cd4557424c8d61114e7530c243e9b0
+  embed: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  decide: 7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6
+dimensions: 768
+retrieval:
+  candidates: 40
+  graph_candidates: 100
+  evidence: 5
+  text_reserve: 1
+tracks:
+  stable:
+    target: v0.2.5
+    provider: python
+    addr: 127.0.0.1:8795
+    health_port: 4295
+    binary_env: ANTFLY_STABLE_BIN
+    database: ../../data/antfly/stable/graph.aflite
+  latest:
+    target: v0.3.0/main
+    provider: antfly
+    addr: 127.0.0.1:8796
+    health_port: 4296
+    binary_env: ANTFLY_LATEST_BIN
+    database: ../../data/antfly/latest/graph.aflite
+    source_commit: c102cbeac5ae8911ffe6a13105731f381285bfc2
+    distributable: false
+    inference_url: http://127.0.0.1:8090
+dataset: apollo13
+title: Apollo 13 communications and Review Board
+corpus: metadata.jsonl
+output: ../../data/builds/apollo13
+extraction:
+  entities:
+  - person
+  - role
+  - spacecraft
+  - component
+  - problem
+  - procedure
+  threshold: 0.5
+  relations:
+    part_of:
+      description: HEAD component is part of TAIL component or spacecraft.
+      head_types:
+      - component
+      tail_types:
+      - component
+      - spacecraft
+    affects:
+      description: HEAD problem affects TAIL component or spacecraft.
+      head_types:
+      - problem
+      tail_types:
+      - component
+      - spacecraft
+    suspected_cause_of:
+      description: HEAD component or problem is suggested, hypothesized or suspected
+        as a cause of TAIL problem, not determined.
+      head_types:
+      - component
+      - problem
+      tail_types:
+      - problem
+    determined_cause_of:
+      description: HEAD component or problem is explicitly determined to have caused
+        TAIL problem.
+      head_types:
+      - component
+      - problem
+      tail_types:
+      - problem
+    mitigates:
+      description: HEAD procedure or component reduces or resolves TAIL problem.
+      head_types:
+      - procedure
+      - component
+      tail_types:
+      - problem
+relation_decision:
+  instruction: 'Choose the explicit directed HEAD-to-TAIL relationship. Preserve uncertainty:
+    contemporaneous hypotheses are not board determinations. A report quoting an earlier
+    suspicion remains suspicion. Do not infer causation from co-mention. Context is
+    provenance, not extra facts; CC is a role, not one person.'
+query_decision:
+  instruction: Compare the query and passage with their provenance. Earlier hypotheses
+    versus later findings are not automatically contradictory. Use only supplied text
+    and model-predicted graphs.
+  labels:
+    supports: Explicitly supports the claim in matching context.
+    contradicts: Explicitly contradicts the claim in matching context, not merely
+      an earlier hypothesis.
+    not_comparable: Different event, time or claim; no meaningful comparison.
+    unclear: The evidence is ambiguous or insufficient.
+  results: 1
+collection:
+  kind: apollo13
+  user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)
+  request_interval_seconds: 2
+  sources:
+  - id: apollo13:air-to-ground
+    path: raw/air-to-ground.md
+    title: Apollo 13 air-to-ground transcript, MET 055:50:05–094:33:21
+    url: https://ntrs.nasa.gov/citations/20160014370
+    download_url: https://apollojournals.org/alsj/a13/AS13_TEC.txt
+    format: transcript
+    source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
+    sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
+  - id: apollo13:review-board
+    path: raw/review-board.md
+    title: Report of Apollo 13 Review Board, main report
+    url: https://ntrs.nasa.gov/citations/19700076776
+    download_url: https://ntrs.nasa.gov/api/citations/19700076776/downloads/19700076776.txt
+    format: text
+    source_sha256: 117c8efcea207aa0fb340ea238c3595a327a6b65399f86c9512c099247877dc3
+  transcript_window:
+    start: 055:50:05
+    end: 094:33:21
+    next: 094:33:31
+    encoding: windows-1252
+    source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
+    sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
