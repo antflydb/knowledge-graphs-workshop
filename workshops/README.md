@@ -88,6 +88,12 @@ candidates, not the planning estimate of 109: punctuation-delimited `Yes.`,
 The real stable 64-passage ASoIaF smoke passed indexed-vector round-trip:
 379 mentions, 145 proposed ordered pairs, 92 actual Decide calls and 90
 accepted model assertions. It is explicitly partial, not full qualification.
+It was subsequently rebuilt with current code as
+`12e7bcae1075020db818b63a0df04c3922191c49a592fd16a8579507718d5b20`.
+The actual `make web` default ASoIaF search completed with five cited passages
+and an explicit partial-build warning: 42 nodes/61 edges, none omitted.
+First-query time was 49.33 s: extraction 19.58 s, no relationship calls,
+embedding 20.40 s and retrieval 9.20 s. This is not a latency-goal pass.
 An actual Apollo diagnostic pair offered `suspected_cause_of`,
 `determined_cause_of`, `mitigates`, `no_relation`, and `unclear`; Decide selected
 `suspected_cause_of` (0.5213), retaining all base proposals and an unresolved

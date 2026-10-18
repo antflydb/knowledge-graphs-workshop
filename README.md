@@ -111,10 +111,10 @@ with redistributed material. Existing `data/` artifacts are not migrated or dele
 
 ASoIaF prose originates at [English Wikipedia](https://en.wikipedia.org/), using
 the frozen 56-article/revision inventory recorded in
-[`datasets/asoiaf/metadata.jsonl`](datasets/asoiaf/metadata.jsonl), exported from the
-preserved `data/asoiaf-wikipedia/sources.jsonl`. Collection does not discover new
-articles or expand categories. Each raw body preserves the existing normalized
-article text exactly; categories, headings, link targets, infoboxes and tables
+[`datasets/asoiaf/metadata.jsonl`](datasets/asoiaf/metadata.jsonl). The bundled
+raw bodies preserve the original normalized article export byte-for-byte.
+Collection does not discover new articles or expand categories. Categories,
+headings, link targets, infoboxes and tables
 are not graph facts. This is not a complete census or a single unified canon.
 
 Bundled prose retains article/revision attribution, modification notices and
@@ -191,6 +191,9 @@ pizza permission remains unverified. Compiled-token capacity refinement produced
 
 All 27 dataset boundary tests and six Wikipedia parser/access tests passed,
 including capacity refinement, unknown speakers and off-site cache rejection.
+A current-code 64-passage ASoIaF rebuild also passed indexed-vector checks.
+The actual `make web` default search returned five cited passages and displayed
+its partial-build warning (42 nodes/61 edges). This does not qualify the full corpus.
 The exact public snapshot also passed those 33 tests, source digest/offset checks
 for bundled Wikipedia/NASA text, the expected missing-local-pizza error, and a
 wheel build containing LICENSE and NOTICE. Full ASoIaF/Apollo model builds and

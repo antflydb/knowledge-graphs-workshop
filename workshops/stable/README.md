@@ -66,6 +66,19 @@ publishing `data/builds/asoiaf/stable/build.json`. Failed publication preserves
 the prior receipt; tables are not dropped/recreated. Model-call caches preserve
 provenance rather than relabeling simulated results as successful execution.
 
+### Stale build after code/settings changes
+
+`make web` starts the viewer; it does not build a graph or start the database.
+`HTTP 422: Build settings/code changed; rebuild selected track` means the selected
+receipt belongs to a different pipeline/configuration. Keep validation enabled:
+start the database above and rerun `build` for that dataset/track. Do not edit a
+receipt's signature or reuse another dataset's receipt.
+
+For the existing 64-passage ASoIaF iteration, use the bounded command above.
+It remains partial and covers only its selected passages—not all 56 articles.
+Use the unlimited command for a full graph. A fresh successful build publishes
+its new receipt atomically; then retry Search in the viewer.
+
 ## Query and optional comparison
 
 ```sh
