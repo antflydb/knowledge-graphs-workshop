@@ -15,8 +15,9 @@ from pydantic import BaseModel, ConfigDict, StrictStr
 from kg import dataset
 from kg.antfly import AntflyError
 from kg.dataset_config import digest, load_dataset
-from kg.dataset_decisions import DecisionError, decide_passage, experiment_payload
+from kg.dataset_decisions import DecisionError, analyze_chunk, decide_passage, experiment_payload
 from kg.dataset_inputs import read_manifest
+from kg.search import StaleSearch, focused_search
 
 ROOT = Path(__file__).resolve().parents[2]
 DATASETS = {
@@ -34,6 +35,9 @@ class SearchRequest(BaseModel):
     dataset: DatasetName
     track: TrackName = "stable"
     text: StrictStr
+    focus_id: StrictStr | None = None
+    build_id: StrictStr | None = None
+    navigate: bool = False
 
 
 class DecideRequest(SearchRequest):
@@ -50,7 +54,6 @@ class ViewerState:
         self.lock = RLock()
         self.models = None
         self.model_key = None
-        self.last_search = None
 
     def close(self):
         with self.lock:
@@ -78,7 +81,6 @@ async def lifespan(app):
         yield
     finally:
         state.close()
-        state.last_search = None
 
 
 app = FastAPI(title="Core dataset graph search", lifespan=lifespan)
@@ -93,6 +95,8 @@ def config(name, track):
 def failure(exc, *, stale=False):
     if isinstance(exc, HTTPException):
         raise exc
+    if isinstance(exc, StaleSearch):
+        return JSONResponse({"error": str(exc)}, status_code=409)
     if isinstance(exc, DecisionError):
         return JSONResponse(exc.payload, status_code=exc.status_code)
     if isinstance(exc, (httpx.HTTPError, AntflyError, ImportError, RuntimeError, OSError)):
@@ -119,11 +123,15 @@ def search(body: SearchRequest):
     with state.lock:
         try:
             cfg = config(body.dataset, body.track)
-            manifest = dataset.load_build(cfg)
-            packet = dataset.query(cfg, body.text, models=state.provider(cfg, manifest))
-            state.last_search = {
-                "dataset": body.dataset, "track": body.track, "packet": packet,
-            }
+            try:
+                manifest = dataset.load_build(cfg)
+            except (ValueError, KeyError) as exc:
+                return failure(exc, stale=body.focus_id is not None)
+            # A recenter uses the index alone; do not even construct a provider.
+            models = None if body.navigate else state.provider(cfg, manifest)
+            packet = focused_search(cfg, body.text, models=models,
+                                    focus_id=body.focus_id, build_id=body.build_id,
+                                    navigate=body.navigate)
             return packet
         except Exception as exc:
             return failure(exc)
@@ -143,14 +151,8 @@ def decide(body: DecideRequest):
                 return failure(exc, stale=True)
             if manifest["build_id"] != body.build_id:
                 raise HTTPException(409, "Build changed; search again before running Decide")
-            saved = state.last_search
-            if (saved is None or saved["dataset"] != body.dataset or saved["track"] != body.track
-                    or saved["packet"]["build_id"] != body.build_id
-                    or saved["packet"]["query"]["text"] != body.text):
-                raise HTTPException(409, "No matching successful search; submit this query again")
-            packet = saved["packet"]
-            if body.passage_id not in {row["passage_id"] for row in packet["results"]}:
-                raise HTTPException(404, "Passage is not a result of the last successful search")
+            if not body.text.strip():
+                raise ValueError("Query must not be empty")
             af = dataset.database(cfg)
             try:
                 passage = af.get(manifest["table"], body.passage_id)
@@ -161,15 +163,23 @@ def decide(body: DecideRequest):
             passage = {**passage, "passage_id": body.passage_id}
             sources = {row["id"]: row for row in read_manifest(cfg)}
             source = sources[passage["source_id"]]
-            if passage["text"] != source["text"][passage["source_start"]:passage["source_end"]]:
+            start, end = passage["source_start"], passage["source_end"]
+            if (type(start) is not int or type(end) is not int
+                    or not 0 <= start < end <= len(source["text"])
+                    or passage["text"] != source["text"][start:end]):
                 raise HTTPException(409, "Indexed evidence differs from raw source; rebuild and search again")
             passage["citation"] = dataset.citation(source, passage)
-            preview = experiment_payload(cfg, body.text, packet["query"]["analysis"], passage,
-                                         instruction=body.instruction, labels=body.labels)
             identity = dataset.embedding_identity(manifest["model_provenance"]["embed"])
             cache = dataset.Cache(cfg, identity)
-            return decide_passage(cfg, body.text, packet["query"]["analysis"], passage, cache,
-                                  state.provider(cfg, manifest), instruction=body.instruction, labels=body.labels)
+            # Normal searches replay their cached real analysis. Navigation and
+            # locally restored Back packets compute it lazily here, never on a
+            # graph click. No server-side last-result/session restriction.
+            models = state.provider(cfg, manifest)
+            query_analysis = analyze_chunk(cfg, body.text, cache, models, {"kind": "query"})
+            preview = experiment_payload(cfg, body.text, query_analysis, passage,
+                                         instruction=body.instruction, labels=body.labels)
+            return decide_passage(cfg, body.text, query_analysis, passage, cache,
+                                  models, instruction=body.instruction, labels=body.labels)
         except Exception as exc:
             response = failure(exc)
             if preview is not None and not isinstance(exc, DecisionError):

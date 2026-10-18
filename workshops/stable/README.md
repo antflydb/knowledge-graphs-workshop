@@ -57,6 +57,22 @@ uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track
 uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track stable build
 ```
 
+To compute all graphs on another machine, keep that database terminal running,
+collect the unbundled pizza text, then build each dataset without a passage cap:
+
+```sh
+make collect DATASET=pizza-portland TRACK=stable
+for dataset in asoiaf pizza-portland apollo13; do
+  make build DATASET="$dataset" TRACK=stable || break
+done
+make web
+```
+
+ASoIaF and Apollo raw text are bundled; pizza raw text is intentionally ignored
+until redistribution permission is established. Graph databases and build receipts
+are generated locally, not included in the public repository. Query/UI changes do
+not run `build`; the focused page reads existing qualified tables.
+
 Build runs real base extraction, real Decide pair classification and real
 EmbeddingGemma 2 passage embeddings in separate phases. Unresolved/ambiguous
 endpoints stay unresolved; a no-proposal passage makes zero relationship Decide
@@ -118,12 +134,18 @@ required locally; its text and containing builds are not cleared for sharing.
 uv run --extra workshop uvicorn kg.web.app:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Open the local address (choose another free port if occupied). Search, inspect
-query and stored passage analysis, click graph nodes/directional edges, open raw
-Markdown citations and exercise the expandable Decide panel. It uses the last
-successful query, not unsubmitted search-box edits. Each of up to three serial
-comparisons retains its own success/error and editable inputs; overflow remains
-visible. The graph is bounded to 50 nodes/100 edges with omitted counts.
+Open the local address (choose another free port if occupied). Search for a name
+or relationship question. Inspect the focused graph and its independently ranked
+single text match. Select a connection to read its cited supporting excerpt;
+select a connected name to recenter, then use Back to restore the prior view.
+Missing extracted relationships remain explicit; they are not negative facts.
+
+Open Developer only when needed for runtime selection, JSON diagnostics or the
+optional Decide experiment. It uses the last successful query, not unsubmitted
+search-box edits. Each of up to three serial comparisons retains its own
+success/error and editable inputs; overflow remains visible without truncation.
+Graph display/candidate bounds are reported rather than implying exhaustive
+coverage. Rebuilding is a separate CLI operation, never a side effect of search.
 
 All assertions are `model_classified_not_verified`; type+surface buckets are not
 identity resolution. Do not infer semantic facts from titles/categories, source

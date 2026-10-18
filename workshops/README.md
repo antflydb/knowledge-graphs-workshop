@@ -59,10 +59,13 @@ their exact inputs and label scores; there is no generated answer, aggregate tru
 label, reranking or graph mutation. Full inputs must fit the 512-token/request
 limits; overflow is visible, never silently truncated.
 
-The [plain local viewer](../README.md#plain-querygraph-page) exposes the query
-analysis, saved passage analysis, citations, graph inspection and actual timing.
-Use one worker and one active provider; selecting an unavailable track must expose
-the real failure, never switch to a different model implementation.
+The [local viewer](../README.md#plain-querygraph-page) starts with focused
+name-group relationships and one independent top text match. Selecting a
+connection opens its supporting source excerpt; selecting another name recenters
+the graph, with Back navigation. Diagnostics, runtime selection and the optional
+Decide experiment live in one initially closed Developer section. Normal graph
+inspection does not expose JSON. Use one worker and one active provider;
+unavailable tracks remain visible errors, never another model implementation.
 
 ## Distribution
 
@@ -90,10 +93,43 @@ The real stable 64-passage ASoIaF smoke passed indexed-vector round-trip:
 accepted model assertions. It is explicitly partial, not full qualification.
 It was subsequently rebuilt with current code as
 `12e7bcae1075020db818b63a0df04c3922191c49a592fd16a8579507718d5b20`.
-The actual `make web` default ASoIaF search completed with five cited passages
-and an explicit partial-build warning: 42 nodes/61 edges, none omitted.
+Before the focused-page redesign, the actual `make web` default ASoIaF search
+completed with five cited passages and an explicit partial-build warning:
+42 nodes/61 edges, none omitted.
 First-query time was 49.33 s: extraction 19.58 s, no relationship calls,
 embedding 20.40 s and retrieval 9.20 s. This is not a latency-goal pass.
+A subsequent five-request retrieval diagnostic reused the real cached extraction
+and embedding, with zero model calls and no resident models. Its first hybrid
+database request took 5,813 ms; the next four took 23, 7, 7 and 7 ms.
+Complete retrieval, including source validation, took 5,834 ms initially and
+35, 20, 20 and 19 ms afterward. This default query had no extracted entity
+anchors, so these measurements do not qualify graph-traversal latency.
+Actual browser repeats also showed variability: 3,083 ms, 858 ms and 21 ms
+for retrieval. [INFERENCE] Index/page-cache warming or host memory pressure
+may explain the slow initial/idle requests; the native internal cause is unproven.
+The UI now presents rounded stage durations in a muted line at the page bottom.
+
+The focused-page redesign was exercised against the existing ASoIaF partial and
+pizza full builds, without recomputing graphs. The Tyrion question has no exact
+indexed name group in that partial selection; the page shows the independent top
+text match and explicit Explore suggestions instead of inventing an answer.
+The real gluten-free pizza question offered ambiguous literal names; selecting
+the dietary-option group retained the question and narrowed the graph to three
+incoming `has_dietary_option` relationships without changing the top text match.
+Selecting an edge opened its actual cited excerpt with highlighted mentions.
+Recenter made zero model calls; Back restored question, selected edge and text.
+Desktop and 390-pixel browser views showed one top text card, a closed Developer
+section and no JSON outside it. Raw citations opened as `text/plain`.
+
+The hidden Decide experiment succeeded after Back with edited two-label inputs;
+its model label is not an accuracy claim. An oversized instruction failed visibly
+at 2,057 tokens against the 512-token limit, preserving the complete 936-character
+classifier input, 11,700-character instruction and prior successful outcome.
+Stale navigation returned 409; nonentity focus, missing Apollo/stable and missing
+ASoIaF/latest builds returned actionable 422 errors without runtime fallback.
+The integrated deterministic suites passed 32 dataset tests and six Wikipedia
+tests. These checks do not qualify full ASoIaF/Apollo coverage or extraction accuracy.
+
 An actual Apollo diagnostic pair offered `suspected_cause_of`,
 `determined_cause_of`, `mitigates`, `no_relation`, and `unclear`; Decide selected
 `suspected_cause_of` (0.5213), retaining all base proposals and an unresolved

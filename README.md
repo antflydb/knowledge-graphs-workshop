@@ -54,25 +54,46 @@ uv run --extra workshop uvicorn kg.web.app:app --host 127.0.0.1 --port 8000 --wo
 ```
 
 Open `http://127.0.0.1:8000`. If the port is occupied, select a free port rather
-than stopping another service. The local trusted tool has dataset/track selectors,
-a search field, actual timings, query analysis, ranked citations and saved
-passage analysis. Its deterministic SVG distinguishes mention links and accepted
-directional predicates; click nodes/edges to inspect evidence. The projection is
-bounded to 50 nodes/100 edges and reports omitted counts. Registered source
-Markdown opens as plain text. It is not an authentication/multi-user product.
+than stopping another service. The page starts with dataset selection and a
+question or name. It shows a focused name-group relationship graph and **one
+independently ranked top text match**, not a combined overview of five passages.
+Questions narrow the relationship view when their intent is understood; an
+unrecognized intent or missing extracted relationship is stated explicitly.
 
-The optional Decide panel separately compares the last successful query with
-one to three retrieved passages, serially and independently. Instructions and
-JSON label descriptions are editable. Each outcome retains the exact input,
-labels, scores and citation, including complete query/passage model graphs.
-Graphs use compact plain text containing every entity's surface/type and every
-accepted directed triple, with explicit “model predictions, not verified” labels.
-It does not change retrieval order, write to either graph or generate an answer.
-Model scores are not calibrated truth. The combined request must fit the existing
-512-token and request-size limits; an oversized request returns visible 422,
-without hidden truncation. Shorten the instruction/labels or select a shorter
-query/passage. Stale builds return 409; unavailable native inference stays visible
-rather than switching providers.
+Intent recognition uses explicit question frames, not free-form reasoning: for
+example, “Who is NAME's father?”, “Which pizzas have a NAME option?” and
+“What mitigates NAME?”. Unsupported phrasings still return the top text match;
+search an indexed name alone to explore its relationships. Ambiguous literal
+name matches require a choice. Lexical **Explore** suggestions open the selected
+name's neighborhood; they do not establish an alias or answer the original question.
+
+Select a relationship to read its actual supporting source excerpt. The top text
+match is not automatically evidence for a graph connection. Select a connected
+name to explore its neighborhood; Back restores the previous view. Names remain
+type + normalized-spelling groups, not resolved identities or inferred aliases.
+A generic `parent_of` edge alone does not establish that someone is the father.
+No generated answer or generative LLM is used: inference is GLiNER extraction,
+GLiNER-Decide classification and the configured embedding model.
+
+The initially closed **Developer** section holds runtime-track controls, raw
+diagnostics, stored analyses and the optional Decide experiment. No JSON is
+needed to search or inspect relationship evidence. Registered source Markdown
+opens as plain text. This remains a loopback-only trusted tool, not an
+authentication/multi-user product.
+
+Timings appear at the bottom as one muted, bullet-separated line rounded to whole
+milliseconds. API diagnostics retain model-call/cache-hit counts. A partial build
+is visibly partial; missing extraction is not evidence that a relationship is false.
+
+Inside Developer, the optional Decide panel separately compares the last
+successful query with one to three retrieved passages, serially and independently.
+Instructions and JSON label descriptions are editable. Each outcome retains its
+exact input, labels, scores and citation, including complete query/passage model
+graphs. It does not change retrieval order, write graph facts or generate an
+answer. Model scores are not calibrated truth. Full inputs must fit the existing
+512-token/request-size limits; overflow is visible without hidden truncation.
+Stale builds return 409; unavailable native inference stays visible rather than
+switching providers.
 
 ## What the graph means
 
@@ -83,11 +104,12 @@ No proposal means no relationship classification call; there is no all-pairs or
 co-occurrence fallback. Rejected and unresolved decisions remain inspectable.
 Accepted assertions are `model_classified_not_verified` predictions, not facts.
 
-Corpus passages and queries use the same extraction/classification pipeline.
-Queries form a transient graph and never add indexed records. Graph retrieval
-attaches matching type+normalized-surface buckets and uses Antfly traversal and
-hybrid ranking with a text reserve. Unmatched entities remain visible; no bucket
-match falls back to normal hybrid retrieval. Empty evidence stays empty.
+The CLI query modes run the shared extraction/classification pipeline and never
+add indexed query records. CLI graph retrieval attaches matching normalized-name
+buckets and uses graph-scoped hybrid ranking with a text reserve. The webpage
+instead keeps its top text match independent of the focused relationship view.
+Name-only navigation reads existing indexed evidence without re-extracting the
+corpus. Empty evidence stays empty; source text and raw offsets are verified.
 
 The `surface_bucket_not_disambiguated` warning matters: normalization groups
 same-type/same-surface mentions; it does not resolve homonyms, aliases, surnames,

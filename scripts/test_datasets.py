@@ -16,6 +16,7 @@ from kg import dataset
 from kg.dataset_decisions import analyze_chunk, differentiate_relations, extract_chunk
 from kg.dataset_inputs import prepare_inputs, read_manifest, transcript_turns, windows
 from kg.evidence_graph import graph_documents
+from kg.search import interpret_intent, match_candidates, _relationships, _specific_parent
 from kg.workshop_native import DEFAULT_MODELS, DEFAULT_REVISIONS, NativeInferenceError, NativeModels
 from kg.workshop_python import _normalize_extraction
 
@@ -493,6 +494,128 @@ class BuildPublication(unittest.TestCase):
                     dataset.save(path, {"build_id": "unpublished"})
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["build_id"], "previous")
+
+
+class FocusedSearchBoundaries(unittest.TestCase):
+    def test_whole_name_matching_keeps_ambiguity_without_inventing_aliases(self):
+        rows = [
+            {"id": "short", "text": "Tyrion", "type": "character"},
+            {"id": "full", "text": "Tyrion Lannister", "type": "character"},
+            {"id": "house", "text": "Lannister", "type": "house"},
+        ]
+        self.assertEqual([r["id"] for r in match_candidates("Who is TYRION LANNISTER's father?", rows)], ["full"])
+        self.assertEqual(match_candidates("the Imp", rows), [])
+        self.assertEqual(match_candidates("Tyrionette", rows), [])
+        ambiguous = [{"id": "city", "text": "Winterfell", "type": "city"},
+                     {"id": "house", "text": "Winterfell", "type": "house"}]
+        self.assertEqual({r["id"] for r in match_candidates("Where is Winterfell?", ambiguous)}, {"city", "house"})
+        self.assertEqual({r["id"] for r in match_candidates("Tyrion and Winterfell", rows + ambiguous)},
+                         {"short", "city", "house"})
+
+    def test_parent_questions_preserve_direction_and_specificity(self):
+        cfg = {"extraction": {"relations": {"parent_of": {}}}}
+        focus = {"text": "Tyrion Lannister"}
+        for question, label, direction in (
+            ("Who is Tyrion Lannister's father?", "father", "incoming"),
+            ("Who is Tyrion Lannister’s mother?", "mother", "incoming"),
+            ("Who are Tyrion Lannister's parents?", "parents", "incoming"),
+            ("Who are Tyrion Lannister's children?", "children", "outgoing"),
+        ):
+            with self.subTest(question=question):
+                intent = interpret_intent(cfg, question, focus)
+                self.assertEqual((intent["status"], intent["predicate"], intent["direction"], intent["label"]),
+                                 ("focused", "parent_of", direction, label))
+        self.assertEqual(interpret_intent(cfg, "Why is Tyrion Lannister sad?", focus)["status"], "unrecognized")
+        self.assertEqual(interpret_intent(cfg, "Who are Tyrion Lannister's sons?", focus)["status"], "unrecognized")
+        self.assertEqual(interpret_intent({"extraction": {"relations": {}}},
+                                        "Who is Tyrion Lannister's father?", focus)["status"], "unrecognized")
+        self.assertEqual(interpret_intent(cfg, "Who is Tyrion Lannister's father?", focus, navigate=True)["status"], "all")
+
+    def test_specific_parent_requires_the_actual_ordered_mentions(self):
+        for text, expected in (
+            ("😀 Ned is the father of Árya.", True),
+            ("Árya's father is Ned.", True),
+            ("Ned is the parent of Árya.", False),
+            ("Ned is the mother of Árya.", False),
+            ("Ned is not the father of Árya.", False),
+            ("Ned met Árya. Elsewhere Jon's father arrived.", False),
+        ):
+            with self.subTest(text=text):
+                assertion = {"text": text, "head": mention(text, "Ned"), "tail": mention(text, "Árya")}
+                self.assertEqual(_specific_parent(assertion, "father"), expected)
+
+    def relationship_fixture(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        cfg = config(directory.name)
+        text = "😀 Ned is the father of Árya. Cersei is the mother of Árya."
+        _, _, text = source_fixture(cfg, text)
+        sources = {row["id"]: row for row in read_manifest(cfg)}
+        passages, analyses = [], {}
+        with closing(dataset.Cache(cfg)) as cache:
+            for start, end, parent in (
+                (0, text.index(" Cersei"), "Ned"),
+                (text.index("Cersei"), len(text), "Cersei"),
+            ):
+                excerpt = text[start:end]
+                key = "passage:" + dataset.digest(["s1", sources["s1"]["sha256"], start, end, excerpt])[:24]
+                head, tail = mention(excerpt, parent), mention(excerpt, "Árya")
+                models = BoundaryModels({"entities": [head, tail], "relations": [proposal(head, tail)]},
+                                        winner="parent_of")
+                analyses[key] = analyze_chunk(cfg, excerpt, cache, models)
+                passages.append({"id": key, "source_id": "s1", "source_start": start,
+                                 "source_end": end, "text": excerpt})
+        docs = graph_documents(cfg, {"sources": sources, "passages": passages}, analyses)
+
+        def matches(row, query):
+            if "conjuncts" in query:
+                return all(matches(row, clause) for clause in query["conjuncts"])
+            if "disjuncts" in query:
+                return any(matches(row, clause) for clause in query["disjuncts"])
+            return row.get(query["field"]) == query["term"]
+
+        class Index:
+            def get(self, table, key):
+                return docs.get(key)
+
+            def query(self, table, body):
+                selected = [{"_id": key, "_source": row} for key, row in docs.items()
+                            if matches(row, body["filter_query"])]
+                return {"responses": [{"hits": {"hits": selected[:body["limit"]],
+                                                "total": {"value": len(selected), "relation": "eq"}}}]}
+
+        focus_id = next(key for key, row in docs.items() if row.get("kind") == "entity" and row["text"] == "Árya")
+        focus = {"id": focus_id, "text": "Árya", "type": "character"}
+        return cfg, Index(), {"table": "isolated"}, focus, sources, docs
+
+    def test_focused_relationships_have_their_own_evidence_and_parent_direction(self):
+        cfg, index, manifest, focus, sources, docs = self.relationship_fixture()
+        parents = interpret_intent(cfg, "Who are Árya's parents?", focus)
+        graph, _ = _relationships(cfg, index, manifest, focus, parents, sources)
+        names = {node["id"]: node["text"] for node in graph["nodes"]}
+        self.assertEqual({(names[e["source"]], names[e["target"]]) for e in graph["edges"]},
+                         {("Ned", "Árya"), ("Cersei", "Árya")})
+        for edge in graph["edges"]:
+            evidence, = edge["evidence"]
+            self.assertEqual(evidence["text"], sources["s1"]["text"][evidence["source_start"]:evidence["source_end"]])
+            self.assertIn(evidence["passage_id"], docs)
+        father = interpret_intent(cfg, "Who is Árya's father?", focus)
+        graph, _ = _relationships(cfg, index, manifest, focus, father, sources)
+        edge, = graph["edges"]
+        self.assertEqual(names[edge["source"]], "Ned")
+        self.assertEqual(edge["predicate"], "parent_of")
+        self.assertNotIn("Cersei", edge["evidence"][0]["text"])
+        children = interpret_intent(cfg, "Who are Árya's children?", focus)
+        graph, _ = _relationships(cfg, index, manifest, focus, children, sources)
+        self.assertEqual(graph["edges"], [])
+
+    def test_indexed_assertion_must_belong_to_its_exact_supporting_passage(self):
+        cfg, index, manifest, focus, sources, docs = self.relationship_fixture()
+        key = next(key for key, row in docs.items() if row.get("kind") == "passage")
+        docs[key] = {**docs[key], "analysis": {**docs[key]["analysis"], "assertions": []}}
+        intent = interpret_intent(cfg, "Who are Árya's parents?", focus)
+        with self.assertRaises(ValueError):
+            _relationships(cfg, index, manifest, focus, intent, sources)
 
 
 if __name__ == "__main__":
