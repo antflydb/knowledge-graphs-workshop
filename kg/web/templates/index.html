@@ -4,89 +4,224 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Core dataset graph search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
 <style>
-:root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
-body { max-width: 1280px; margin: 1.5rem auto; padding: 0 1rem 2rem; }
-h1,h2,h3 { line-height: 1.25; } h1 { font-size: 1.7rem; } h2 { font-size: 1.25rem; }
-label { display: block; margin: .6rem 0; }
-select,button,input,textarea { font: inherit; padding: .45rem .6rem; }
-input,textarea { box-sizing: border-box; } textarea { width: 100%; }
-button { cursor: pointer; } button:disabled { cursor: default; opacity: .6; }
-button:focus-visible,a:focus-visible,summary:focus-visible { outline: 3px solid #bd8a1a; outline-offset: 3px; }
-.row { display: flex; gap: .8rem; flex-wrap: wrap; align-items: end; }
-.row label { flex: 1; min-width: 12rem; } .query-label { flex: 3 !important; } #query { width: 100%; }
-.notice { border-left: 3px solid #7e8c99; padding: .35rem .8rem; }
-.error { color: light-dark(#a21b1b,#ffb3b3); }
-.muted,.caption,#timings { color: light-dark(#59636d,#acb5be); }
-.caption { font-size: .88rem; } #timings { font-size: .85rem; margin-top: 1.8rem; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; background: light-dark(#f2f4f6,#202830); padding: .8rem; max-height: 34rem; overflow: auto; }
-.card { border: 1px solid light-dark(#b9c3cc,#536171); border-radius: .45rem; padding: 1rem; margin: .8rem 0; }
-.card > :first-child { margin-top: 0; } .card > :last-child { margin-bottom: 0; }
-.passage { white-space: pre-wrap; overflow-wrap: anywhere; } details { margin: .8rem 0; } summary { cursor: pointer; }
-a { color: light-dark(#165a98,#8dc7ff); } .source-links { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .9rem; }
-mark { background: light-dark(#ffecb2,#66511e); color: inherit; padding: 0 .08rem; }
-.focus-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 1rem; align-items: start; }
-.graph-wrap { overflow: auto; border: 1px solid light-dark(#b9c3cc,#536171); border-radius: .4rem; }
-svg { display: block; width: 100%; min-width: 650px; background: light-dark(#fafbfd,#151c23); }
-svg .node rect { fill: light-dark(#e5edf7,#263d54); stroke: light-dark(#3e5267,#b1c4d8); }
-svg .node.focus rect { fill: light-dark(#dcecdf,#284b35); stroke-width: 2; }
-svg text { fill: light-dark(#17212b,#eef4fa); font: 14px system-ui,sans-serif; }
-svg .node .type { font-size: 12px; fill: light-dark(#52606d,#c1ccd8); }
-svg .edge path { stroke: light-dark(#986023,#e6ac68); stroke-width: 2; fill: none; }
+/* Palette and type follow the text-to-graph playground (examples/text-to-graph). */
+:root {
+  --canvas: #f2f4f7; --paper: #ffffff; --field: #eceff3; --dot: #cfd6df;
+  --ink: #14171c; --ink-2: #4a5260; --ink-3: #8a93a2; --rule: #dde2e9; --edge: #9aa4b2;
+  --accent: #3757d4; --focus: #0b8a78; --warn: #b4432f; --mark: #c26410;
+  --ui: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --prose: "Source Serif 4", ui-serif, Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #0e1115; --paper: #151920; --field: #11151a; --dot: #262d36;
+    --ink: #e7eaef; --ink-2: #aab2be; --ink-3: #6c7583; --rule: #242a33; --edge: #5b6573;
+    --accent: #7d95ff; --focus: #3fc9b2; --warn: #e07a64; --mark: #f0a050;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden;
+  background: var(--canvas); color: var(--ink); font: 14px/1.5 var(--ui); -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { line-height: 1.25; margin: 0; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button {
+  cursor: pointer; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px;
+  padding: 6px 14px; font-weight: 500;
+}
+button:hover:not(:disabled) { border-color: var(--edge); }
+button:disabled { cursor: default; opacity: .5; }
+select, input, textarea {
+  background: var(--field); border: 1px solid var(--rule); border-radius: 8px; padding: 6px 10px; min-width: 0; color: var(--ink);
+}
+input::placeholder { color: var(--ink-3); }
+textarea { width: 100%; font-family: var(--mono); font-size: 12px; }
+label { color: var(--ink-3); font-size: 13px; }
+.caption, .muted { color: var(--ink-3); font-size: 12.5px; }
+.error { color: var(--warn); }
+pre {
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--mono); color: var(--ink-2);
+  background: var(--field); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; max-height: 28rem; overflow: auto; margin: 8px 0;
+}
+details { margin: 8px 0; }
+summary { cursor: pointer; color: var(--ink-2); }
+mark { background: color-mix(in srgb, var(--mark) 16%, transparent); color: inherit; border-bottom: 2px solid var(--mark); padding: 0 .06em; border-radius: 2px 2px 0 0; }
+
+/* Top bar */
+.top {
+  display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap;
+  padding: 12px 20px; border-bottom: 1px solid var(--rule); background: var(--canvas);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
+.slash { color: var(--ink-3); }
+.brand h1 { font-size: 17px; font-weight: 500; letter-spacing: -.01em; color: var(--ink-2); }
+#search-form { flex: 1 1 520px; min-width: 0; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.row .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.query-label { flex: 1; min-width: 0; } #query { width: 100%; }
+#search-button { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+#status { font: 12px var(--mono); color: var(--ink-2); white-space: pre-wrap; max-width: 34ch; }
+#status.error { color: var(--warn); }
+
+/* Workspace: graph canvas + side panel */
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 30rem); min-height: 0; }
+.workspace > .empty { grid-column: 1 / -1; display: grid; place-content: center; text-align: center; gap: 6px; color: var(--ink-3); }
+.empty strong { color: var(--ink-2); font-weight: 500; font-size: 15px; }
+main:not([hidden]) ~ .empty { display: none; }
+#search-output { display: contents; }
+.stage {
+  position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background-color: var(--canvas); background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 22px 22px;
+}
+.stage-head { padding: 16px 20px 6px; display: grid; gap: 6px; }
+#search-title { font: 12px var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#build-notice { font: 11.5px var(--mono); color: var(--mark); margin-top: -4px; }
+#focus-title { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+#relationship-status { color: var(--ink-2); font-size: 13.5px; }
+#focus-candidates { display: flex; flex-wrap: wrap; gap: 6px; }
+#focus-candidates:empty { display: none; }
+#focus-candidates button { border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+.stage-note { padding: 0 20px; }
+.focus-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#graph-help { padding: 0 20px; }
+.graph-wrap { flex: 1; min-height: 0; padding: 4px 12px; }
+svg { display: block; width: 100%; height: 100%; }
+svg .node rect { fill: var(--paper); stroke: var(--rule); stroke-width: 1.2; }
+svg .node:hover rect { stroke: var(--edge); }
+svg .node.focus rect { fill: color-mix(in srgb, var(--focus) 10%, var(--paper)); stroke: var(--focus); stroke-width: 2; }
+svg text { fill: var(--ink); font: 500 15px var(--ui); }
+svg .node .type { font: 12px var(--mono); fill: var(--ink-3); }
+svg .edge path { stroke: var(--edge); stroke-width: 1.6; fill: none; }
+svg marker path { fill: var(--edge); }
 svg .edge .hit { stroke: transparent; stroke-width: 20; }
-svg .edge text { font-size: 13px; paint-order: stroke; stroke: light-dark(#fafbfd,#151c23); stroke-width: 5px; stroke-linejoin: round; }
-svg .edge.selected path:not(.hit) { stroke: light-dark(#165a98,#8dc7ff); stroke-width: 4; }
-svg .node,svg .edge { cursor: pointer; } svg [role=button]:focus { outline: none; }
-svg .node:focus rect,svg .edge:focus path:not(.hit) { stroke: #bd8a1a; stroke-width: 4; }
-#edge-options { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
-#edge-options button { font-size: .82rem; text-align: left; }
-#edge-options button[aria-pressed=true] { border: 2px solid light-dark(#165a98,#8dc7ff); }
-#focus-candidates { display: flex; flex-wrap: wrap; gap: .5rem; }
-#evidence { margin-top: 0; } #evidence h3 { font-size: 1rem; }
-#top-result.related { border-color: light-dark(#165a98,#8dc7ff); }
-#status { white-space: pre-wrap; } #developer { border-top: 1px solid #89949f; margin-top: 2rem; padding-top: .7rem; }
-.experiment { border-top: 1px solid #89949f; padding-top: .6rem; }
-@media (max-width: 900px) { .focus-layout { grid-template-columns: minmax(0,1fr); } }
-@media (max-width: 600px) { body { padding: 0 .7rem 1rem; } .row { gap: .2rem; } .row label { min-width: 100%; } }
+svg .edge text { font: 13px var(--mono); fill: var(--ink-2); paint-order: stroke; stroke: var(--canvas); stroke-width: 5px; stroke-linejoin: round; }
+svg .edge:hover path:not(.hit) { stroke: var(--ink-2); }
+svg .edge.selected path:not(.hit) { stroke: var(--accent); stroke-width: 3; }
+svg .edge.selected text { fill: var(--accent); }
+svg .node, svg .edge { cursor: pointer; } svg [role=button]:focus { outline: none; }
+svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); stroke-width: 3; }
+.stage-foot { padding: 6px 20px 12px; display: grid; gap: 8px; }
+#edge-options { display: flex; flex-wrap: wrap; gap: 6px; max-height: 4.6rem; overflow: auto; }
+#edge-options button { font-size: 12.5px; padding: 3px 11px; border-radius: 999px; text-align: left; }
+#edge-options button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+#graph-counts { font-family: var(--mono); font-size: 12px; }
+
+/* Side panel */
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--paper); border-left: 1px solid var(--rule); }
+.side > * { padding: 16px 20px; }
+#evidence { flex: 1 1 0; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 16px 20px; }
+#evidence h2, .side h2 { font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+#evidence h3 { font-size: 15px; font-weight: 600; }
+.top-section { flex: 0 1 auto; max-height: 48%; overflow: auto; display: grid; align-content: start; gap: 8px; }
+#evidence:not([hidden]) ~ .top-section { max-height: 48%; }
+#evidence[hidden] ~ .top-section { flex: 1 1 0; max-height: none; }
+.card { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; background: var(--paper); display: grid; gap: 8px; }
+.card > * { margin: 0; }
+#evidence .card { background: var(--canvas); }
+#top-result { border-left: 3px solid var(--rule); }
+#top-result h3 { font-size: 15px; font-weight: 600; }
+#top-result.related { border-color: var(--accent); }
+.passage { white-space: pre-wrap; overflow-wrap: anywhere; font: 15.5px/1.6 var(--prose); color: var(--ink); }
+.source-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
+
+/* Footer + developer drawer */
+.foot { display: flex; align-items: center; gap: 16px; padding: 8px 20px; border-top: 1px solid var(--rule); background: var(--canvas); position: relative; }
+#timings { flex: 1; font: 12px var(--mono); color: var(--ink-3); margin: 0; }
+#developer { margin: 0; }
+#developer > summary { list-style: none; font-size: 13px; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+#developer > summary::-webkit-details-marker { display: none; }
+#developer[open] > summary { border-color: var(--accent); color: var(--accent); }
+.drawer {
+  position: fixed; left: 0; right: 0; bottom: var(--foot-h, 45px); max-height: min(72vh, 52rem); overflow: auto; z-index: 5;
+  background: var(--paper); border-top: 1px solid var(--rule); box-shadow: 0 -12px 32px rgb(0 0 0 / .12); padding: 16px 20px 24px;
+}
+.drawer > * + * { margin-top: 10px; }
+.drawer h2 { font-size: 15px; margin-top: 18px; }
+.drawer label { display: block; margin: 8px 0; color: var(--ink-2); }
+.drawer .card { margin: 10px 0; }
+.drawer .card label { display: flex; align-items: center; gap: 6px; }
+.experiment { border-top: 1px solid var(--rule); padding-top: 8px; }
+
+@media (max-width: 900px) {
+  body { display: block; overflow: auto; height: auto; }
+  .workspace { display: block; }
+  #search-output { display: block; }
+  .graph-wrap { flex: none; }
+  svg { height: auto; }
+  #edge-options { max-height: none; }
+  .side { display: block; border-left: 0; border-top: 1px solid var(--rule); }
+  #evidence, .top-section { max-height: none !important; overflow: visible; }
+  .row { flex-wrap: wrap; }
+  .query-label { flex: 1 1 100%; order: -1; }
+  .drawer { position: static; box-shadow: none; max-height: none; }
+  .foot { flex-wrap: wrap; }
+}
 </style>
 </head>
 <body>
-<h1>Core dataset graph search</h1>
+<header class="top">
+<div class="brand"><span class="wordmark">antfly</span><span class="slash">/</span><h1>Core dataset graph search</h1></div>
 <form id="search-form">
 <div class="row">
-<label>Dataset <select id="dataset"><option value="asoiaf">ASoIaF</option><option value="pizza-portland">Portland pizza</option><option value="apollo13">Apollo 13</option></select></label>
-<label class="query-label">Question or entity <input id="query" required value="Who is Tyrion Lannister's father?"></label>
+<label><span class="sr">Dataset</span><select id="dataset"><option value="asoiaf">ASoIaF</option><option value="pizza-portland">Portland pizza</option><option value="apollo13">Apollo 13</option></select></label>
+<label class="query-label"><span class="sr">Question or entity</span><input id="query" required value="Who is Tyrion Lannister's father?" placeholder="Question or entity"></label>
 <button id="search-button" type="submit">Search</button>
 <button id="back-button" type="button" disabled>Back</button>
 </div>
 </form>
 <p id="status" role="status" aria-live="polite">Choose a dataset and search.</p>
+</header>
+<div class="workspace">
 <main id="search-output" hidden>
+<section class="stage" aria-labelledby="focus-title">
+<div class="stage-head">
 <h2 id="search-title">Last successful search</h2>
 <p id="build-notice" class="caption"></p>
-<section aria-labelledby="focus-title">
 <h2 id="focus-title">Entity relationships</h2>
 <p id="relationship-status" class="notice"></p>
 <div id="focus-candidates" aria-label="Choose an indexed entity"></div>
-<p class="caption">Model-extracted relationships between name groups—not verified identities.</p>
+</div>
+<p class="caption stage-note">Model-extracted relationships between name groups—not verified identities.</p>
 <div class="focus-layout">
-<div>
 <p id="graph-help" class="caption">Choose an arrow to read its sources. Choose a name to recenter; Back restores your previous view. Graph controls support Tab, Enter and Space.</p>
 <div id="graph-wrap" class="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Focused entity relationships" aria-describedby="graph-help"></svg></div>
+<div class="stage-foot">
 <div id="edge-options" aria-label="Select relationship evidence"></div>
 <p id="graph-counts" class="caption"></p>
 </div>
-<aside id="evidence" class="card" aria-label="Selected relationship evidence" aria-live="polite"></aside>
 </div>
 </section>
-<section aria-labelledby="top-title">
+<div class="side">
+<aside id="evidence" class="card" aria-label="Selected relationship evidence" aria-live="polite"></aside>
+<section class="top-section" aria-labelledby="top-title">
 <h2 id="top-title">Top text result</h2>
 <p class="caption">Ranked independently of the graph. A connection’s sources are shown when you select it.</p>
 <article id="top-result" class="card"></article>
 </section>
+</div>
 </main>
+<div class="empty"><strong>Ask a question or name an entity.</strong><span class="caption">Relationships extracted from the indexed corpus appear here, with their cited sources alongside.</span></div>
+</div>
+<footer class="foot">
+<p id="timings" aria-label="Search timings"></p>
 <details id="developer">
 <summary>Developer</summary>
+<div class="drawer">
 <label>Runtime track <select id="track" form="search-form"><option value="stable">stable · Python / Antfly v0.2.5</option><option value="latest">latest · native main (requires qualified build/service)</option></select></label>
 <p class="caption">Track applies to the next search. Recenter and Decide use the displayed successful search's dataset and track.</p>
 <details id="request-error-details" hidden><summary>Last request error</summary><pre id="request-error"></pre></details>
@@ -110,8 +245,9 @@ svg .node:focus rect,svg .edge:focus path:not(.hit) { stroke: #bd8a1a; stroke-wi
 <div id="experiments"></div>
 </section>
 </div>
+</div>
 </details>
-<p id="timings" aria-label="Search timings"></p>
+</footer>
 <script id="defaults" type="application/json">{{ defaults | tojson }}</script>
 <script>
 'use strict';
