@@ -13,6 +13,7 @@
   --canvas: #f2f4f7; --paper: #ffffff; --field: #eceff3; --dot: #cfd6df;
   --ink: #14171c; --ink-2: #4a5260; --ink-3: #8a93a2; --rule: #dde2e9; --edge: #9aa4b2;
   --accent: #3757d4; --focus: #0b8a78; --warn: #b4432f; --mark: #c26410;
+  --hl-0: #c26410; --hl-1: #3757d4; --hl-2: #9a3fb8; --hl-3: #0b8a78;
   --ui: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
   --prose: "Source Serif 4", ui-serif, Georgia, serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -23,6 +24,7 @@
     --canvas: #0e1115; --paper: #151920; --field: #11151a; --dot: #262d36;
     --ink: #e7eaef; --ink-2: #aab2be; --ink-3: #6c7583; --rule: #242a33; --edge: #5b6573;
     --accent: #7d95ff; --focus: #3fc9b2; --warn: #e07a64; --mark: #f0a050;
+    --hl-0: #f0a050; --hl-1: #7d95ff; --hl-2: #d38bf0; --hl-3: #3fc9b2;
     color-scheme: dark;
   }
 }
@@ -50,15 +52,10 @@ select, input, textarea {
 input::placeholder { color: var(--ink-3); }
 textarea { width: 100%; font-family: var(--mono); font-size: 12px; }
 label { color: var(--ink-3); font-size: 13px; }
-.caption, .muted { color: var(--ink-3); font-size: 12.5px; }
+.caption { color: var(--ink-3); font-size: 12.5px; }
 .error { color: var(--warn); }
-pre {
-  white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--mono); color: var(--ink-2);
-  background: var(--field); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; max-height: 28rem; overflow: auto; margin: 8px 0;
-}
-details { margin: 8px 0; }
 summary { cursor: pointer; color: var(--ink-2); }
-mark { background: color-mix(in srgb, var(--mark) 16%, transparent); color: inherit; border-bottom: 2px solid var(--mark); padding: 0 .06em; border-radius: 2px 2px 0 0; }
+mark { background: color-mix(in srgb, var(--hl, var(--mark)) 16%, transparent); color: inherit; border-bottom: 2px solid var(--hl, var(--mark)); padding: 0 .06em; border-radius: 2px 2px 0 0; }
 
 /* Top bar */
 .top {
@@ -82,12 +79,18 @@ body.playground .workspace, body.playground .foot, body.playground #search-form,
 #search-button { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 #status { font: 12px var(--mono); color: var(--ink-2); white-space: pre-wrap; max-width: 34ch; }
 #status.error { color: var(--warn); }
+#status:empty { display: none; }
 
 /* Workspace: graph canvas + side panel */
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 30rem); min-height: 0; }
-.workspace > .empty { grid-column: 1 / -1; display: grid; place-content: center; text-align: center; gap: 6px; color: var(--ink-3); }
-.empty strong { color: var(--ink-2); font-weight: 500; font-size: 15px; }
-main:not([hidden]) ~ .empty { display: none; }
+.landing { grid-column: 1 / -1; display: grid; align-content: start; justify-items: center; gap: 14px; padding: 48px 20px; overflow: auto; text-align: center; }
+main:not([hidden]) ~ .landing { display: none; }
+#landing-caption { color: var(--ink-2); max-width: 70ch; }
+#type-filter, #top-entities { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 1000px; }
+#type-filter button { border-radius: 999px; padding: 3px 12px; font: 12px var(--mono); color: var(--ink-2); }
+#type-filter button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+#top-entities button { border-radius: 8px; padding: 5px 12px; font-size: 14px; }
+#top-entities button span { font: 11px var(--mono); color: var(--ink-3); margin-left: 6px; }
 #search-output { display: contents; }
 .stage {
   position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0;
@@ -95,24 +98,31 @@ main:not([hidden]) ~ .empty { display: none; }
 }
 .stage-head { padding: 16px 20px 6px; display: grid; gap: 6px; }
 #search-title { font: 12px var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#build-notice { font: 11.5px var(--mono); color: var(--mark); margin-top: -4px; }
+#crumb { color: var(--ink-2); }
 #focus-title { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 #relationship-status { color: var(--ink-2); font-size: 13.5px; }
-#focus-candidates { display: flex; flex-wrap: wrap; gap: 6px; }
-#focus-candidates:empty { display: none; }
-#focus-candidates button { border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+#relationship-status:empty { display: none; }
 #focus-summary { font: 12px var(--mono); color: var(--ink-2); }
-#focus-summary:empty, #name-groups:empty { display: none; }
-#name-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-#name-groups .caption { margin-right: 2px; }
-#name-groups button { border-radius: 8px; padding: 3px 10px; font-size: 13px; text-align: left; }
-#name-groups button span { font: 11px var(--mono); color: var(--ink-3); margin-left: 6px; }
-#name-groups button[aria-pressed=true] { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+#focus-summary:empty, .node-row:empty { display: none; }
+.node-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.node-row .caption { min-width: 6.5em; }
+.node-row button { border-radius: 8px; padding: 3px 10px; font-size: 13px; text-align: left; }
+.node-row button .name { border-bottom: 2px solid var(--hl, transparent); }
+.node-row button .stats { font: 11px var(--mono); color: var(--ink-3); margin-left: 6px; }
+.node-row button[aria-pressed=true] { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+.more { border-style: dashed; color: var(--ink-2); }
 .decide { font: 12px var(--mono); color: var(--ink-2); }
+.when { font: 11.5px var(--mono); color: var(--ink-3); }
+.timeline { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--rule); display: grid; gap: 12px; }
+.timeline li { position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -21px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--paper); border: 2px solid var(--edge); }
+.timeline li.latest::before { border-color: var(--accent); background: var(--accent); }
+.timeline h3 { font-size: 14px; font-weight: 600; margin: 2px 0; }
+.chip { display: inline-block; font: 11px var(--mono); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-2); margin-right: 4px; }
+.chip.latest { border-color: var(--accent); color: var(--accent); }
+.timeline .passage { font-size: 14px; line-height: 1.5; margin-top: 4px; }
 .decide b { color: var(--ink); font-weight: 500; }
-.stage-note { padding: 0 20px; }
 .focus-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#graph-help { padding: 0 20px; }
 .graph-wrap { flex: 1; min-height: 0; padding: 4px 12px; }
 svg { display: block; width: 100%; height: 100%; }
 svg .node rect { fill: var(--paper); stroke: var(--rule); stroke-width: 1.2; }
@@ -130,36 +140,33 @@ svg .edge.selected text { fill: var(--accent); }
 svg .node, svg .edge { cursor: pointer; } svg [role=button]:focus { outline: none; }
 svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); stroke-width: 3; }
 .stage-foot { padding: 6px 20px 12px; display: grid; gap: 8px; }
-#edge-options { display: flex; flex-wrap: wrap; gap: 6px; max-height: 4.6rem; overflow: auto; }
-#edge-options button { font-size: 12.5px; padding: 3px 11px; border-radius: 999px; text-align: left; }
-#edge-options button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 #graph-counts { font-family: var(--mono); font-size: 12px; }
+#graph-counts:empty { display: none; }
 
 /* Side panel */
 .side { display: flex; flex-direction: column; min-height: 0; background: var(--paper); border-left: 1px solid var(--rule); }
 .side > * { padding: 16px 20px; }
-#evidence { flex: 1 1 0; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 16px 20px; }
+#evidence { flex: 1 1 0; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; border: 0; border-radius: 0; padding: 16px 20px; }
 #evidence h2, .side h2 { font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 #evidence h3 { font-size: 15px; font-weight: 600; }
-.top-section { flex: 0 1 auto; max-height: 48%; overflow: auto; display: grid; align-content: start; gap: 8px; }
-#evidence:not([hidden]) ~ .top-section { max-height: 48%; }
-#evidence[hidden] ~ .top-section { flex: 1 1 0; max-height: none; }
 .card { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; background: var(--paper); display: grid; gap: 8px; }
 .card > * { margin: 0; }
 #evidence .card { background: var(--canvas); }
-#top-result { border-left: 3px solid var(--rule); }
-#top-result h3 { font-size: 15px; font-weight: 600; }
-#top-result.related { border-color: var(--accent); }
+#evidence button:not(.more) { justify-self: start; }
 .passage { white-space: pre-wrap; overflow-wrap: anywhere; font: 15.5px/1.6 var(--prose); color: var(--ink); }
 .source-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
 
-/* Footer + developer drawer */
+/* Footer + Decide drawer */
 .foot { display: flex; align-items: center; gap: 16px; padding: 8px 20px; border-top: 1px solid var(--rule); background: var(--canvas); position: relative; }
-#timings { flex: 1; font: 12px var(--mono); color: var(--ink-3); margin: 0; }
-#developer { margin: 0; }
-#developer > summary { list-style: none; font-size: 13px; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
-#developer > summary::-webkit-details-marker { display: none; }
-#developer[open] > summary { border-color: var(--accent); color: var(--accent); }
+#timings { font: 12px var(--mono); color: var(--ink-3); margin: 0; }
+#busy { font: 12px var(--mono); color: var(--accent); margin-left: -8px; }
+#busy::before { content: "• "; color: var(--ink-3); }
+#timings:empty + #busy::before { content: none; }
+#decide-panel > summary { list-style: none; font-size: 13px; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+#decide-panel > summary::-webkit-details-marker { display: none; }
+#decide-panel[open] > summary { border-color: var(--accent); color: var(--accent); }
+#decide-panel > summary::after { content: " ▴"; } #decide-panel[open] > summary::after { content: " ▾"; }
+#decide-run { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .drawer {
   position: fixed; left: 0; right: 0; bottom: var(--foot-h, 45px); max-height: min(72vh, 52rem); overflow: auto; z-index: 5;
   background: var(--paper); border-top: 1px solid var(--rule); box-shadow: 0 -12px 32px rgb(0 0 0 / .12); padding: 16px 20px 24px;
@@ -167,7 +174,8 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 .drawer > * + * { margin-top: 10px; }
 .drawer h2 { font-size: 15px; margin-top: 18px; }
 .drawer label { display: block; margin: 8px 0; color: var(--ink-2); }
-.drawer .card { margin: 10px 0; }
+.drawer-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.drawer-head h2 { margin: 0; }
 
 @media (max-width: 900px) {
   body { display: block; overflow: auto; height: auto; }
@@ -175,13 +183,11 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
   #search-output { display: block; }
   .graph-wrap { flex: none; }
   svg { height: auto; }
-  #edge-options { max-height: none; }
   .side { display: block; border-left: 0; border-top: 1px solid var(--rule); }
-  #evidence, .top-section { max-height: none !important; overflow: visible; }
+  #evidence { overflow: visible; }
   .row { flex-wrap: wrap; }
   .query-label { flex: 1 1 100%; order: -1; }
-  .drawer { position: static; box-shadow: none; max-height: none; }
-  .foot { flex-wrap: wrap; }
+  .foot { flex-wrap: wrap; position: sticky; bottom: 0; z-index: 6; }
 }
 </style>
 </head>
@@ -191,64 +197,55 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 <nav class="tabs" aria-label="Workshop pages"><a href="#" id="tab-search" aria-current="page">Graph search</a><a href="#text-to-graph" id="tab-playground">Text to graph</a></nav></div>
 <form id="search-form">
 <div class="row">
-<label><span class="sr">Dataset</span><select id="dataset"><option value="asoiaf">ASoIaF</option><option value="pizza-portland">Portland pizza</option><option value="apollo13">Apollo 13</option></select></label>
+<label><span class="sr">Dataset</span><select id="dataset">{% for name, item in defaults.items() %}<option value="{{ name }}"{% if name == "asoiaf" %} selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></label>
 <label class="query-label"><span class="sr">Question or entity</span><input id="query" required value="Who is Tyrion Lannister's father?" placeholder="Question or entity"></label>
 <button id="search-button" type="submit">Search</button>
 <button id="back-button" type="button" disabled>Back</button>
 </div>
 </form>
-<p id="status" role="status" aria-live="polite">Choose a dataset and search.</p>
+<p id="status" role="status" aria-live="polite"></p>
 </header>
 <iframe id="playground-frame" title="Text to graph playground" hidden></iframe>
 <div class="workspace">
 <main id="search-output" hidden>
 <section class="stage" aria-labelledby="focus-title">
 <div class="stage-head">
-<h2 id="search-title">Last successful search</h2>
-<p id="build-notice" class="caption"></p>
+<p id="search-title"><a href="#" id="crumb" title="Back to the most-linked entities"></a><span id="crumb-query"></span></p>
 <h2 id="focus-title">Entity relationships</h2>
 <p id="focus-summary"></p>
-<p id="relationship-status" class="notice"></p>
-<div id="focus-candidates" aria-label="Choose an indexed entity"></div>
-<div id="name-groups" aria-label="Entity nodes sharing a word with this name"></div>
+<p id="relationship-status"></p>
+<div id="recognized" class="node-row" aria-label="Nodes named in the question"></div>
+<div id="related" class="node-row" aria-label="Other nodes sharing a word with those names"></div>
 </div>
-<p class="caption stage-note">Model-extracted relationships between name groups—not verified identities.</p>
 <div class="focus-layout">
-<p id="graph-help" class="caption">Choose an arrow to read its sources. Choose a name to recenter; Back restores your previous view. Graph controls support Tab, Enter and Space.</p>
-<div id="graph-wrap" class="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Focused entity relationships" aria-describedby="graph-help"></svg></div>
+<div id="graph-wrap" class="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Focused entity relationships: choose an arrow to read its sources, or a name to recenter"></svg></div>
 <div class="stage-foot">
-<div id="edge-options" aria-label="Select relationship evidence"></div>
 <p id="graph-counts" class="caption"></p>
 </div>
 </div>
 </section>
 <div class="side">
-<aside id="evidence" class="card" aria-label="Selected relationship evidence" aria-live="polite"></aside>
-<section class="top-section" aria-labelledby="top-title">
-<h2 id="top-title">Top text result</h2>
-<p class="caption">Ranked independently of the graph. A connection’s sources are shown when you select it.</p>
-<article id="top-result" class="card"></article>
-</section>
+<aside id="evidence" class="card" aria-label="Passages for the selected node or relationship" aria-live="polite"></aside>
 </div>
 </main>
-<div class="empty"><strong>Ask a question or name an entity.</strong><span class="caption">Relationships extracted from the indexed corpus appear here, with their cited sources alongside.</span></div>
+<div class="landing" id="landing">
+<p id="landing-caption">Loading the graph…</p>
+<div id="type-filter" aria-label="Filter by entity type"></div>
+<div id="top-entities" aria-label="Most-linked entities"></div>
+</div>
 </div>
 <footer class="foot">
-<p id="timings" aria-label="Search timings"></p>
-<details id="developer">
-<summary>Developer</summary>
+<p id="timings" aria-label="Search timings"></p><span id="busy" hidden>Searching…</span>
+<details id="decide-panel">
+<summary>Decide</summary>
 <div class="drawer">
-<p class="caption">Antfly v0.3.0-rc.1 extracted every relationship at ingest with GLiNER2.5. “Ask Decide” re-classifies one relationship on demand with GLiNER2.5-Decide; nothing is written back.</p>
-<details id="request-error-details" hidden><summary>Last request error</summary><pre id="request-error"></pre></details>
-<h2>Decide settings</h2>
+<div class="drawer-head"><h2>Decide</h2><button id="decide-close" type="button">Collapse ▾</button></div>
+<p class="caption">GLiNER2.5-Decide (<span id="decide-model"></span>) receives exactly these three boxes and scores every label; nothing is written back to the graph. “Ask Decide” on a relationship opens this with its passage, HEAD and TAIL lines and, unless you have edited them, the labels allowed for that pair of entity types; nothing runs until you choose Run Decide. Any text works.</p>
+<label>Input <textarea id="decide-input" rows="8" spellcheck="false" placeholder="Text:&#10;…&#10;&#10;HEAD: … [type]&#10;TAIL: … [type]"></textarea></label>
 <label>Instruction <textarea id="instruction" rows="3"></textarea></label>
-<label>Label descriptions (optional JSON object; blank uses every predicate allowed for the pair's entity types, plus no_relation and unclear) <textarea id="labels" rows="5" spellcheck="false"></textarea></label>
-<div id="developer-output" hidden>
-<details><summary>Search packet</summary><pre id="diagnostics"></pre></details>
-<h2>Retrieved passages</h2>
-<p class="caption">Hybrid BM25 + vector ranking, independent of the relationship view.</p>
-<div id="results"></div>
-</div>
+<label>Labels, one per line as name: description <textarea id="labels" rows="8" spellcheck="false"></textarea></label>
+<div class="row"><button id="decide-run" type="button">Run Decide</button><button id="decide-reset" type="button">Reset instruction and labels</button></div>
+<div id="decide-output" aria-live="polite"></div>
 </div>
 </details>
 </footer>
@@ -257,7 +254,6 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 'use strict';
 const defaults = JSON.parse(document.getElementById('defaults').textContent);
 const $ = id => document.getElementById(id);
-const json = value => JSON.stringify(value, null, 2);
 let lastSearch = null, busy = false, selectedEdgeId = null;
 const history = [];
 function element(tag, text, cls) {
@@ -268,9 +264,10 @@ function element(tag, text, cls) {
 }
 function setBusy(value) {
   busy = value;
+  $('busy').hidden = !value;
   $('search-button').disabled = value;
   $('back-button').disabled = value || history.length === 0;
-  document.querySelectorAll('.recenter, .ask-decide').forEach(button => { button.disabled = value; });
+  document.querySelectorAll('.recenter, .ask-decide, #decide-run').forEach(button => { button.disabled = value; });
   $('graph').setAttribute('aria-busy', String(value));
 }
 async function post(url, data) {
@@ -278,14 +275,13 @@ async function post(url, data) {
   const text = await response.text();
   let packet;
   try { packet = JSON.parse(text); } catch { packet = {error: text || response.statusText}; }
-  if (!response.ok) { $('request-error-details').hidden = false; $('request-error').textContent = json(packet); }
   return {ok: response.ok, status: response.status, packet};
 }
 function errorText(packet) {
   if (typeof packet.error === 'string') return packet.error;
   if (typeof packet.detail === 'string') return packet.detail;
   if (Array.isArray(packet.detail)) return packet.detail.map(item => item.msg || 'Invalid request field').join('; ');
-  return 'The request failed. Open Developer for response diagnostics.';
+  return 'The request failed.';
 }
 function externalLink(url, text) {
   if (typeof url !== 'string') return null;
@@ -296,65 +292,85 @@ function externalLink(url, text) {
   } catch { return null; }
 }
 function citationView(citation = {}, sourceId, datasetName) {
-  const box = element('div');
-  box.append(element('p', citation.title || 'Source', 'caption'));
-  const links = element('p', undefined, 'source-links');
-  if (sourceId || citation.id) {
-    const raw = element('a', 'Read source text');
-    raw.href = '/raw/' + encodeURIComponent(datasetName) + '/' + encodeURIComponent(sourceId || citation.id);
-    raw.target = '_blank'; raw.rel = 'noopener noreferrer'; links.append(raw);
+  // One link: the original page if there is one, else the bundled source text.
+  const box = element('div'), links = element('p', undefined, 'source-links');
+  let link = externalLink(citation.url, 'Original source');
+  if (!link && (sourceId || citation.id)) {
+    link = element('a', 'Read source text'); link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.href = '/raw/' + encodeURIComponent(datasetName) + '/' + encodeURIComponent(sourceId || citation.id);
   }
-  for (const [key, title] of [['url','Original source'],['revision_url','Exact revision'],['download_url','Download origin']]) {
-    const link = externalLink(citation[key], title);
-    if (link) links.append(link);
-  }
+  if (link) links.append(link);
   box.append(links);
   const context = [citation.met, citation.speaker, citation.printed_label].filter(Boolean);
   if (context.length) box.append(element('p', context.join(' · '), 'caption'));
   return box;
 }
+function when(timestamp) {
+  return timestamp ? timestamp.replace('T', ' ').replace(/:\d\dZ$/, ' UTC') : '';
+}
 function highlightedText(text, spans = []) {
   // Spans are character offsets; Array.from walks the same code points.
   const passage = element('p', undefined, 'passage'), chars = Array.from(text || '');
   let cursor = 0;
-  for (const span of [...spans].sort((a, b) => a.start - b.start || b.end - a.end)) {
+  for (const span of spans.filter(Boolean).sort((a, b) => a.start - b.start || b.end - a.end)) {
     if (span.start < cursor || span.end > chars.length) continue;
-    passage.append(document.createTextNode(chars.slice(cursor, span.start).join('')), element('mark', chars.slice(span.start, span.end).join('')));
+    const mark = element('mark', chars.slice(span.start, span.end).join(''));
+    if (span.hl) mark.style.setProperty('--hl', span.hl);
+    passage.append(document.createTextNode(chars.slice(cursor, span.start).join('')), mark);
     cursor = span.end;
   }
   passage.append(document.createTextNode(chars.slice(cursor).join('')));
   return passage;
 }
-function renderResults(packet) {
-  $('results').replaceChildren();
-  const rows = packet.results || [];
-  if (!rows.length) $('results').append(element('p', 'No passages were returned.'));
-  rows.forEach((row, index) => {
-    const card = element('article', undefined, 'card');
-    card.append(element('h3', `${index + 1}. ${row.citation?.title || 'Passage'}`));
-    card.append(element('p', `${row.passage_id} · score ${row.score ?? '—'}`, 'caption'));
-    card.append(element('p', row.text, 'passage'), citationView(row.citation, row.source_id, lastSearch.dataset));
-    $('results').append(card);
-  });
-}
 function selectedEdge() { return (lastSearch?.packet.graph.edges || []).find(edge => edge.id === selectedEdgeId); }
 function factsIn(edge, passageId) { return (edge?.facts || []).filter(fact => fact.passage_id === passageId); }
-function renderTopResult() {
-  const box = $('top-result'), row = lastSearch.packet.top_result, edge = selectedEdge(); box.replaceChildren(); box.classList.remove('related');
-  if (!row) { box.append(element('p', 'No independently ranked text result was returned.')); return; }
-  const facts = factsIn(edge, row.passage_id);
-  box.append(element('h3', row.citation?.title || 'Text match'));
-  if (facts.length) { box.classList.add('related'); box.append(element('p', 'This same passage is also cited for the selected relationship.', 'caption')); }
-  box.append(highlightedText(row.text, facts.flatMap(fact => [fact.head, fact.tail])), citationView(row.citation, row.source_id, lastSearch.dataset));
+function expandable(box, items, first, moreLabel) {
+  // The first items, then More to reveal the rest and Collapse to hide them again.
+  const rest = items.slice(first);
+  box.append(...items.slice(0, first));
+  if (!rest.length) return;
+  const more = element('button', moreLabel, 'more'), less = element('button', 'Collapse 🔼', 'more');
+  more.type = less.type = 'button';
+  more.addEventListener('click', () => more.replaceWith(...rest, less));
+  less.addEventListener('click', () => { rest.forEach(item => item.remove()); less.replaceWith(more); });
+  box.append(more);
 }
+function nameSpans(text, names, hl) {
+  // Where a node's names occur, as code-point offsets like highlightedText expects.
+  const alternatives = [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length)
+    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!alternatives.length) return [];
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives.join('|')})(?![\\p{L}\\p{N}])`, 'giu');
+  return [...text.matchAll(pattern)].map(match => {
+    const start = Array.from(text.slice(0, match.index)).length;
+    return {start, end: start + Array.from(match[0]).length, hl};
+  });
+}
+function nodeColors(packet) {
+  // Each node named in the question gets a colour, shared by its button and its passage highlights.
+  return new Map((packet.name_groups || []).filter(group => group.recognized).map((group, index) => [group.id, `var(--hl-${index % 4})`]));
+}
+function nodeSpans(text) {
+  const {packet} = lastSearch, colors = nodeColors(packet), groups = new Map((packet.name_groups || []).map(g => [g.id, g]));
+  const named = [...colors.keys()];
+  if (packet.focus && !colors.has(packet.focus.id)) named.push(packet.focus.id);
+  return named.flatMap(id => {
+    const group = groups.get(id) || {text: packet.focus.text, aliases: packet.graph?.focus_summary?.aliases || []};
+    return nameSpans(text, [group.text, ...group.aliases], colors.get(id));
+  });
+}
+function passageCard(row, spans, ...extra) {
+  const card = element('section', undefined, 'card');
+  if (row.timestamp) card.append(element('p', when(row.timestamp), 'when'));
+  card.append(highlightedText(row.text, spans), ...extra, citationView(row.citation, row.source_id, lastSearch.dataset));
+  return card;
+}
+function relationName(edge) { return edge.label || edge.predicate.replaceAll('_', ' '); }
 function edgeDescription(edge) {
   const nodes = new Map((lastSearch.packet.graph.nodes || []).map(node => [node.id, node]));
-  return `${nodes.get(edge.source)?.text || 'Entity'} → ${edge.label || edge.predicate.replaceAll('_', ' ')} → ${nodes.get(edge.target)?.text || 'Entity'}`;
+  return `${nodes.get(edge.source)?.text || 'Entity'} → ${relationName(edge)} → ${nodes.get(edge.target)?.text || 'Entity'}`;
 }
-function edgeLabel(edge) {
-  const label = edge.label || edge.predicate.replaceAll('_', ' ');
-  return edge.support ? `${label} ×${edge.support}` : label;
-}
+function edgeLabel(edge) { return edge.support ? `${relationName(edge)} ×${edge.support}` : relationName(edge); }
 function scoreLine(prefix, scores) {
   const line = element('p', undefined, 'decide');
   line.append(document.createTextNode(prefix));
@@ -364,41 +380,101 @@ function scoreLine(prefix, scores) {
   });
   return line;
 }
-async function askDecide(fact, slot) {
-  let labels = null;
-  const raw = $('labels').value.trim();
-  if (raw) {
-    try { labels = JSON.parse(raw); }
-    catch (error) { slot.replaceChildren(element('p', 'Label JSON is invalid: ' + error.message, 'error')); return; }
+function labelsText(labels) { return Object.entries(labels).map(([name, description]) => `${name}: ${description}`).join('\n'); }
+function parseLabels(text) {
+  const labels = {};
+  for (const line of text.split('\n').map(line => line.trim()).filter(Boolean)) {
+    const colon = line.indexOf(':'), name = line.slice(0, colon).trim();
+    if (colon < 1) throw new Error(`Each label line needs "name: description": ${line}`);
+    if (name in labels) throw new Error(`Duplicate label: ${name}`);
+    labels[name] = line.slice(colon + 1).trim();
   }
-  setBusy(true); slot.replaceChildren(element('p', 'Asking Decide…', 'caption'));
+  return labels;
+}
+let labelsEdited = false;
+function resetDecide() {
+  const item = defaults[$('dataset').value];
+  $('decide-model').textContent = item.decide_model; $('instruction').value = item.instruction;
+  $('labels').value = labelsText(item.all_labels); labelsEdited = false; $('decide-output').replaceChildren();
+}
+async function runDecide() {
+  const show = node => $('decide-output').replaceChildren(node);
+  let labels;
+  try { labels = parseLabels($('labels').value); } catch (error) { show(element('p', error.message, 'error')); return; }
+  setBusy(true); show(element('p', 'Asking Decide…', 'caption'));
   try {
-    const response = await post('/api/decide', {dataset: lastSearch.dataset, build_id: lastSearch.packet.build_id,
-      passage_id: fact.passage_id, head: fact.head, tail: fact.tail, instruction: $('instruction').value || null, labels});
-    slot.replaceChildren(response.ok ? scoreLine('Decide: ', response.packet.scores)
-      : element('p', `HTTP ${response.status}: ${errorText(response.packet)}`, 'error'));
-  } catch (error) { slot.replaceChildren(element('p', error.message, 'error')); }
+    const response = await post('/api/decide', {dataset: $('dataset').value, input: $('decide-input').value,
+      instruction: $('instruction').value, labels});
+    show(response.ok ? scoreLine('Decide: ', response.packet.scores) : element('p', `HTTP ${response.status}: ${errorText(response.packet)}`, 'error'));
+  } catch (error) { show(element('p', error.message, 'error')); }
   finally { setBusy(false); }
 }
+function askDecide(text, head, tail) {
+  // The same input format the dataset's instruction is written for.
+  $('decide-input').value = `Text:\n${text}\n\nHEAD: ${head.text} [${head.label}]\nTAIL: ${tail.text} [${tail.label}]`;
+  const item = defaults[$('dataset').value];
+  if (!labelsEdited) $('labels').value = labelsText(item.labels[`${head.label}|${tail.label}`] || item.all_labels);
+  $('decide-output').replaceChildren(); $('decide-panel').open = true; $('decide-run').focus();
+}
+$('labels').addEventListener('input', () => { labelsEdited = true; });
+$('decide-reset').addEventListener('click', resetDecide);
+$('decide-run').addEventListener('click', () => { if (!busy) runDecide(); });
+$('decide-close').addEventListener('click', () => { $('decide-panel').open = false; });
+function renderTimeline(box) {
+  // Documents about, referencing or mentioning the focus, oldest first; newer may supersede older.
+  const how = {describes: 'about it', references: 'references it', mentions: 'mentions it'};
+  box.append(element('h2', 'Timeline'), element('p', 'Every document that mentions, describes or references this node, oldest first. Newer documents may supersede older ones.', 'caption'));
+  const list = element('ol', undefined, 'timeline');
+  for (const entry of lastSearch.packet.timeline) {
+    const item = element('li', undefined, entry.latest ? 'latest' : '');
+    item.append(element('p', when(entry.timestamp) || 'no timestamp', 'when'), element('h3', entry.title || entry.source_id));
+    const chips = element('p');
+    entry.how.forEach(kind => chips.append(element('span', how[kind] || kind, 'chip')));
+    if (entry.latest) chips.append(element('span', 'latest', 'chip latest'));
+    let text = entry.passage.text;
+    if (entry.title && text.startsWith(entry.title)) text = text.slice(entry.title.length).trim();
+    if (text.length > 180) text = text.slice(0, 180) + '…';
+    item.append(chips, element('p', text, 'passage'), citationView(entry.passage.citation, entry.source_id, lastSearch.dataset));
+    list.append(item);
+  }
+  box.append(list);
+}
 function renderEvidence() {
-  const box = $('evidence'), edge = selectedEdge(); box.replaceChildren();
-  box.append(element('h2', 'Relationship sources'));
-  if (!edge) { box.append(element('p', 'Select a relationship arrow or its button to read the passages it was extracted from.')); return; }
-  const names = new Map((lastSearch.packet.graph.nodes || []).map(node => [node.id, node.text]));
-  box.append(element('h3', edgeDescription(edge)), element('p', 'Extracted by GLiNER2.5 at ingest. Each passage votes; the majority labels the connection. The source text is authoritative.', 'caption'));
-  if ((edge.votes || []).length > 1) box.append(element('p', 'Votes: ' + edge.votes.map(v =>
-    `${v.predicate.replaceAll('_', ' ')} ×${v.count} (${names.get(v.source) || v.source} → ${names.get(v.target) || v.target})`).join(' · '), 'decide'));
-  (edge.evidence || []).forEach(row => {
-    const quote = element('section', undefined, 'card'), facts = factsIn(edge, row.passage_id);
-    quote.append(highlightedText(row.text, facts.flatMap(fact => [fact.head, fact.tail])));
-    for (const fact of facts) {
-      const line = element('p', `GLiNER: ${fact.head.text} → ${(fact.predicate || edge.predicate).replaceAll('_', ' ')} → ${fact.tail.text} · ${(fact.score ?? 0).toFixed(2)} `, 'decide');
-      const slot = element('div'), button = element('button', 'Ask Decide', 'ask-decide'); button.type = 'button';
-      button.addEventListener('click', () => { if (!busy) askDecide(fact, slot); });
-      line.append(button); quote.append(line, slot);
+  // One panel: the selected relationship's passages, else the focused node's.
+  const box = $('evidence'), edge = selectedEdge(), {packet} = lastSearch, focus = packet.focus;
+  box.replaceChildren();
+  if (edge) { renderEdge(box, edge); return; }
+  box.append(element('h3', focus ? focus.text : `Best matches for “${lastSearch.text}”`));
+  if (focus && (packet.timeline || []).length) { renderTimeline(box); return; }
+  const rows = packet.results || [];
+  if (!rows.length) { box.append(element('p', 'No passages matched.', 'caption')); return; }
+  expandable(box, rows.map(row => passageCard(row, nodeSpans(row.text))), 1, `More passages… (${rows.length - 1})`);
+}
+function renderEdge(box, edge) {
+  const focus = lastSearch.packet.focus, names = new Map((lastSearch.packet.graph.nodes || []).map(node => [node.id, node.text]));
+  if (focus) {
+    const back = element('button', `← ${focus.text}`); back.type = 'button';
+    back.addEventListener('click', () => selectEdge(null)); box.append(back);
+  }
+  box.append(element('h3', edgeDescription(edge)));
+  const top = (edge.votes || [])[0];
+  if (top && top.count < edge.support) box.append(element('p', `${top.count} of ${edge.support} extracted facts agree on this; the rest are noted on each passage.`, 'decide'));
+  const reading = fact => `${fact.predicate.replaceAll('_', ' ')}${fact.source === edge.source && fact.target === edge.target ? ''
+    : ` (${names.get(fact.source) || fact.source} → ${names.get(fact.target) || fact.target})`}`;
+  const cards = (edge.evidence || []).map(row => {
+    const facts = factsIn(edge, row.passage_id), model = facts.filter(fact => !fact.explicit), extra = [];
+    if (model.length) extra.push(element('p', 'GLiNER confidence: ' + model.map(fact => `${reading(fact)} ${(fact.score ?? 0).toFixed(2)}`).join(' · '), 'decide'));
+    for (const fact of facts.filter(fact => fact.explicit)) extra.push(element('p', `Explicit link in the text: ${reading(fact)}`, 'decide'));
+    // One question per passage: does it state a relationship from this edge's source to its target?
+    const fact = facts.find(fact => fact.head && fact.tail);
+    if (fact) {
+      const [head, tail] = fact.source === edge.source ? [fact.head, fact.tail] : [fact.tail, fact.head];
+      const button = element('button', 'Ask Decide', 'ask-decide'); button.type = 'button';
+      button.addEventListener('click', () => askDecide(row.text, head, tail)); extra.push(button);
     }
-    quote.append(citationView(row.citation, row.source_id, lastSearch.dataset)); box.append(quote);
+    return passageCard(row, facts.flatMap(fact => [fact.head, fact.tail]), ...extra);
   });
+  expandable(box, cards, 1, `More passages… (${cards.length - 1})`);
 }
 function selectEdge(id) {
   selectedEdgeId = id;
@@ -407,7 +483,7 @@ function selectEdge(id) {
     if (node.tagName.toLowerCase() === 'button') node.setAttribute('aria-pressed', String(selected));
     else node.classList.toggle('selected', selected);
   });
-  renderEvidence(); renderTopResult();
+  renderEvidence();
 }
 const SVG = 'http://www.w3.org/2000/svg';
 function svgElement(tag, attrs = {}, text) {
@@ -421,9 +497,10 @@ function activate(node, action) {
   node.addEventListener('click', () => { if (!busy) action(); });
   node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!busy) action(); } });
 }
-function recenter(node, navigate = true) {
+function recenter(node) {
+  // Every node click opens that node's own page, whichever page it came from.
   if (busy || !lastSearch) return;
-  search({dataset: lastSearch.dataset, text: navigate ? node.text : lastSearch.text, focus_id: node.id, build_id: lastSearch.packet.build_id, navigate});
+  search({dataset: lastSearch.dataset, text: node.text, focus_id: node.id, build_id: lastSearch.packet.build_id, navigate: true});
 }
 function wrapName(text) {
   const words = String(text).split(/\s+/), lines = [''];
@@ -435,13 +512,13 @@ function wrapName(text) {
   return lines;
 }
 function renderGraph(graph) {
-  const svg = $('graph'); svg.replaceChildren(); $('edge-options').replaceChildren();
+  const svg = $('graph'); svg.replaceChildren();
   const allNodes = graph.nodes || [], allEdges = graph.edges || [];
   const focus = allNodes.find(node => node.id === lastSearch.packet.focus?.id) || allNodes[0];
   const nodes = focus ? [focus, ...allNodes.filter(node => node.id !== focus.id)].slice(0, 11) : [];
   const ids = new Set(nodes.map(node => node.id));
   const edges = allEdges.filter(edge => ids.has(edge.source) && ids.has(edge.target)).slice(0, 18);
-  $('graph-wrap').hidden = !edges.length; $('graph-help').hidden = !edges.length;
+  $('graph-wrap').hidden = !edges.length;
   const rows = Math.ceil(Math.max(1, nodes.length - 1) / 2), height = Math.max(320, rows * 112 + 70), center = {x: 480, y: height / 2};
   svg.setAttribute('viewBox', `0 0 960 ${height}`);
   const defs = svgElement('defs'), marker = svgElement('marker', {id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse'});
@@ -469,7 +546,6 @@ function renderGraph(graph) {
     const group = svgElement('g', {class: 'edge', 'data-edge-id': edge.id, 'aria-label': 'Read sources: ' + edgeDescription(edge)});
     group.append(svgElement('path', {d: path, class: 'hit'}), svgElement('path', {d: path, 'marker-end': 'url(#arrow)'}), svgElement('text', {x: tx, y: ty, 'text-anchor': 'middle'}, edgeLabel(edge)), svgElement('title', {}, edgeDescription(edge)));
     activate(group, () => selectEdge(edge.id)); svg.append(group);
-    const button = element('button', edge.support ? `${edgeDescription(edge)} ×${edge.support}` : edgeDescription(edge)); button.type = 'button'; button.setAttribute('data-edge-id', edge.id); button.setAttribute('aria-pressed', 'false'); button.addEventListener('click', () => { if (!busy) selectEdge(edge.id); }); $('edge-options').append(button);
   });
   nodes.forEach(node => {
     const {x,y} = positions.get(node.id), group = svgElement('g', {class: 'node' + (node.id === focus.id ? ' focus' : ''), 'aria-label': `Recenter on ${node.text}, ${node.type}`});
@@ -477,12 +553,12 @@ function renderGraph(graph) {
     if (lines.length > 2) shown[1] = shown[1].slice(0, 20) + '…';
     group.append(svgElement('rect', {x: x - 106, y: y - 38, width: 212, height: 76, rx: 8}));
     shown.forEach((line, index) => group.append(svgElement('text', {x, y: y - (shown.length === 2 ? 14 : 4) + index * 19, 'text-anchor': 'middle'}, line)));
-    group.append(svgElement('text', {x, y: y + 26, 'text-anchor': 'middle', class: 'type'}, node.type), svgElement('title', {}, `${node.text} (${node.type}) — recenter`));
-    activate(group, () => recenter(node)); svg.append(group);
+    group.append(svgElement('text', {x, y: y + 26, 'text-anchor': 'middle', class: 'type'}, node.type.replaceAll('_', ' ')), svgElement('title', {}, `${node.text} (${node.type}) — recenter`));
+    activate(group, () => node.id === focus.id ? selectEdge(null) : recenter(node)); svg.append(group);
   });
   const omittedNodes = (graph.omitted_nodes || 0) + allNodes.length - nodes.length, omittedEdges = (graph.omitted_edges || 0) + allEdges.length - edges.length;
-  $('graph-counts').textContent = nodes.length ? `${nodes.length} entities · ${edges.length} relationships${omittedNodes || omittedEdges ? ` · Focused view omits ${omittedNodes} entities and ${omittedEdges} relationships. Recenter to explore.` : ''}` : 'No matching indexed entity relationships to display.';
-  $('graph-counts').hidden = !edges.length;
+  $('graph-counts').textContent = edges.length && (omittedNodes || omittedEdges)
+    ? `Showing ${edges.length} of ${edges.length + omittedEdges} relationships. Recenter on a name to explore the rest.` : '';
 }
 function renderTimings(timings = {}) {
   $('timings').textContent = ['extraction', 'retrieval', 'name_groups']
@@ -493,60 +569,53 @@ function renderTimings(timings = {}) {
 function renderSearch() {
   const {packet, dataset, text} = lastSearch;
   $('dataset').value = dataset; $('query').value = text;
-  $('search-output').hidden = false; $('developer-output').hidden = false;
-  $('search-title').textContent = `${defaults[dataset].title} — ${text}`;
-  $('build-notice').textContent = packet.partial ? 'Partial build · selected passages only' : 'Complete indexed build';
-  $('status').className = ''; $('status').textContent = 'Search complete.';
+  $('search-output').hidden = false;
+  $('crumb').textContent = defaults[dataset].title; $('crumb-query').textContent = ` — ${text}`;
   const edges = packet.graph?.edges || [];
   const requested = packet.intent?.status === 'focused' ? ` · ${packet.intent.label}` : '';
-  $('focus-title').textContent = packet.focus ? `${packet.focus.text}${requested}` : 'Entity relationships';
-  $('relationship-status').textContent = !packet.focus
-    ? (packet.focus_candidates?.length ? 'Choose a matching name group to focus this question.' : 'No indexed name group matched this question. The top text match is below.')
-    : packet.intent?.status === 'unrecognized'
-      ? 'The name matched, but the requested relationship was not recognized. Search the name alone to explore its connections.'
-      : !edges.length ? 'No matching extracted relationship found. The top text match is below.'
-        : 'Select a connection to read its supporting source. Select another name to explore.';
-  $('evidence').hidden = !edges.length;
-  if (packet.focus_candidates_complete === false || packet.graph?.scan_complete === false || packet.focus_candidates_omitted > 0) {
-    $('relationship-status').textContent += ' Showing a bounded selection; more indexed matches may exist.';
-  }
-  $('focus-candidates').replaceChildren();
-  for (const node of packet.focus_candidates || []) {
-    const button = element('button', `${node.text} (${node.type})`, 'recenter'); button.type = 'button'; button.addEventListener('click', () => recenter(node, false)); $('focus-candidates').append(button);
-  }
-  for (const node of packet.focus_suggestions || []) {
-    const button = element('button', `Explore ${node.text} (${node.type})`, 'recenter'); button.type = 'button';
-    button.addEventListener('click', () => recenter(node, true)); $('focus-candidates').append(button);
-  }
+  $('focus-title').textContent = packet.focus ? `${packet.focus.text}${requested}` : '';
+  const named = (packet.name_groups || []).some(group => group.recognized);
+  $('relationship-status').textContent = [
+    !packet.focus ? (named ? '' : 'No node is named in the question; these share a word with it.')
+      : !edges.length ? 'No extracted relationships for this node.' : '',
+    ...(packet.notes || [])].filter(Boolean).join(' ');
   const summary = packet.graph?.focus_summary;
-  $('focus-summary').textContent = summary ? [
-    `${packet.focus.id}`, `aliases: ${summary.aliases.join(', ')}`, `in ${summary.passages} passages`,
-    ...Object.entries(summary.predicates).map(([p, c]) => `${p.replaceAll('_', ' ')}: ${c.relationships} links / ${c.facts} facts`)
-  ].join(' · ') : '';
-  $('name-groups').replaceChildren();
-  if ((packet.name_groups || []).length) {
-    $('name-groups').append(element('span', 'Name groups:', 'caption'));
-    for (const group of packet.name_groups) {
-      const button = element('button', group.text, 'recenter'); button.type = 'button';
-      button.append(element('span', `${group.type} · ${group.passages} passages · ${group.neighbors} neighbors`));
-      button.title = `${group.id} — aliases: ${group.aliases.join(', ')}`;
-      button.setAttribute('aria-pressed', String(group.id === packet.focus?.id));
-      button.addEventListener('click', () => recenter(group, true)); $('name-groups').append(button);
-    }
-  }
-  $('diagnostics').textContent = json(packet);
-  renderResults(packet); renderGraph(packet.graph); renderEvidence(); renderTopResult(); renderTimings(packet.timings);
+  $('focus-summary').textContent = summary ? [packet.focus.type.replaceAll('_', ' '), `aliases: ${summary.aliases.join(', ')}`,
+    `in ${summary.passages} passages`].join(' · ') : '';
+  $('focus-summary').title = packet.focus ? `Graph node ${packet.focus.id}` : '';
+  renderNodes(packet);
+  renderGraph(packet.graph); renderEvidence(); renderTimings(packet.timings);
   if (selectedEdgeId) selectEdge(selectedEdgeId);
+}
+function renderNodes(packet) {
+  // Every button is a node and does the same thing: open it. Recognized = named in the question.
+  const colors = nodeColors(packet), groups = packet.name_groups || [];
+  const button = group => {
+    const node = element('button', undefined, 'recenter'), name = element('span', group.text, 'name'); node.type = 'button';
+    if (colors.has(group.id)) node.style.setProperty('--hl', colors.get(group.id));
+    node.append(name, element('span', `${group.type.replaceAll('_', ' ')} · 📄 ${group.passages} · 🔗 ${group.neighbors}`, 'stats'));
+    node.title = `${group.id}: in ${group.passages} passages, linked to ${group.neighbors} nodes. Aliases: ${group.aliases.join(', ')}`;
+    node.setAttribute('aria-pressed', String(group.id === packet.focus?.id));
+    node.addEventListener('click', () => recenter(group));
+    return node;
+  };
+  const recognized = groups.filter(group => group.recognized), related = groups.filter(group => !group.recognized);
+  const close = related.filter(group => group.close), first = close.length ? close.length : Math.min(4, related.length);
+  $('recognized').replaceChildren(...(recognized.length ? [element('span', 'Recognized:', 'caption'), ...recognized.map(button)] : []));
+  $('related').replaceChildren();
+  if (related.length) {
+    $('related').append(element('span', 'Related:', 'caption'));
+    expandable($('related'), [...close, ...related.filter(group => !group.close)].map(button), first, `More… (${related.length - first} sharing a word)`);
+  }
 }
 async function search(selection) {
   if (busy) return;
   const previous = lastSearch ? {search: lastSearch, edge: selectedEdgeId} : null;
-  setBusy(true); $('status').className = ''; $('status').textContent = selection.navigate ? 'Opening relationships…' : 'Searching…';
+  setBusy(true); $('status').className = ''; $('status').textContent = '';
   try {
     const response = await post('/api/search', selection);
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${errorText(response.packet)}`);
     if (previous) history.push(previous);
-    if (!lastSearch || lastSearch.dataset !== selection.dataset) $('instruction').value = defaults[selection.dataset].instruction;
     lastSearch = {...selection, packet: response.packet}; selectedEdgeId = null;
     renderSearch();
   } catch (error) {
@@ -561,7 +630,48 @@ $('back-button').addEventListener('click', () => {
   const state = history.pop(); lastSearch = state.search; selectedEdgeId = state.edge;
   renderSearch(); setBusy(false);
 });
-$('instruction').value = defaults[$('dataset').value].instruction;
+resetDecide();
+let landing = null, landingType = null;
+async function loadLanding() {
+  // Read live from the current build: GLiNER's entity types and Antfly's most-linked nodes.
+  const dataset = $('dataset').value;
+  $('landing-caption').textContent = 'Loading the graph…'; $('type-filter').replaceChildren(); $('top-entities').replaceChildren();
+  setBusy(true);
+  try {
+    const response = await fetch('/api/overview?dataset=' + encodeURIComponent(dataset));
+    const packet = await response.json().catch(() => ({error: response.statusText}));
+    if (!response.ok) throw new Error(errorText(packet));
+    if ($('dataset').value === dataset) { landing = {dataset, packet}; landingType = null; renderLanding(); }
+  } catch (error) { $('landing-caption').textContent = error.message; }
+  finally { setBusy(false); }
+}
+function renderLanding() {
+  const {dataset, packet} = landing, counts = packet.counts;
+  $('landing-caption').textContent = `${defaults[dataset].title}: ${counts.passages} passages · ${counts.entities} entities · ${counts.edges} edges. The most-linked entities:`;
+  $('type-filter').replaceChildren();
+  for (const item of [{type: null, entities: counts.entities}, ...packet.types]) {
+    const button = element('button', `${item.type ? item.type.replaceAll('_', ' ') : 'all types'} ${item.entities}`); button.type = 'button';
+    button.setAttribute('aria-pressed', String(item.type === landingType)); button.disabled = !item.entities;
+    button.addEventListener('click', () => { landingType = item.type; renderLanding(); }); $('type-filter').append(button);
+  }
+  $('top-entities').replaceChildren();
+  packet.top.filter(entity => !landingType || entity.type === landingType).slice(0, 24).forEach(entity => {
+    const button = element('button', entity.text, 'recenter'); button.type = 'button';
+    button.append(element('span', `${entity.type.replaceAll('_', ' ')} · ${entity.links} link${entity.links === 1 ? '' : 's'}`));
+    button.addEventListener('click', () => search({dataset, text: entity.text, focus_id: entity.id, build_id: packet.build_id, navigate: true}));
+    $('top-entities').append(button);
+  });
+  if (!$('top-entities').children.length) $('top-entities').append(element('p', 'No linked entities of this type.', 'caption'));
+}
+function showLanding() {
+  $('search-output').hidden = true; $('timings').textContent = ''; $('status').textContent = '';
+  lastSearch = null; selectedEdgeId = null; history.length = 0; setBusy(false);
+  if (landing?.dataset === $('dataset').value) renderLanding(); else loadLanding();
+}
+$('dataset').addEventListener('change', () => { resetDecide(); showLanding(); });
+$('crumb').addEventListener('click', event => { event.preventDefault(); if (!busy) showLanding(); });
+$('tab-search').addEventListener('click', () => { if (!document.body.classList.contains('playground')) showLanding(); });
+loadLanding();
 function showPage() {
   // The playground is its own app (playground/, prebuilt into /playground/); load it on first use.
   const playground = location.hash === '#text-to-graph';

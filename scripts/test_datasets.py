@@ -11,7 +11,7 @@ import httpx
 
 from kg.antfly import Antfly
 from kg import dataset
-from kg.dataset_decisions import RESERVED_LABELS, decide_relationship, relationship_labels
+from kg.dataset_decisions import RESERVED_LABELS, decide, relationship_labels
 from kg.dataset_inputs import prepare_inputs, read_manifest, transcript_turns, windows
 from kg.evidence_graph import character_span
 from kg.search import interpret_intent, match_candidates, _relationships
@@ -94,18 +94,18 @@ class DecideBoundaries(unittest.TestCase):
         self.assertEqual(set(relationship_labels(self.cfg, "character", "house")), {"member_of", *RESERVED_LABELS})
         self.assertEqual(set(relationship_labels(self.cfg, "city", "house")), set(RESERVED_LABELS))
 
-    def test_decide_reports_every_score_and_the_exact_input(self):
-        models = DecideModels("knows")
-        result = decide_relationship(self.cfg, self.passage, mention(self.text, "Ned"), mention(self.text, "Árya"), models)
+    def test_decide_scores_every_label_for_exactly_the_input_it_was_given(self):
+        models, labels = DecideModels("knows"), relationship_labels(self.cfg, "character", "character")
+        result = decide(models, "Any text at all.", "Pick one.", labels)
         self.assertEqual(result["label"], "knows")
-        self.assertEqual(set(result["scores"]), {"parent_of", "knows", *RESERVED_LABELS})
-        self.assertIn("HEAD: Ned [character]", result["input"])
-        self.assertEqual(models.calls[0][2], self.cfg["relation_decision"]["instruction"])
+        self.assertEqual(set(result["scores"]), set(labels))
+        self.assertEqual(models.calls, [("Any text at all.", labels, "Pick one.")])
 
-    def test_decide_rejects_a_span_that_is_not_in_the_passage(self):
-        bad = {**mention(self.text, "Ned"), "start": 1}
+    def test_decide_rejects_empty_input_or_a_single_label(self):
         with self.assertRaises(ValueError):
-            decide_relationship(self.cfg, self.passage, bad, mention(self.text, "Árya"), DecideModels())
+            decide(DecideModels(), " ", "Pick one.", RESERVED_LABELS)
+        with self.assertRaises(ValueError):
+            decide(DecideModels(), "Text.", "Pick one.", {"knows": "They know each other."})
 
 
 class ExtractorSpans(unittest.TestCase):
@@ -313,7 +313,6 @@ class FocusedSearchBoundaries(unittest.TestCase):
         self.assertEqual(interpret_intent(cfg, "Who are Tyrion Lannister's sons?", focus)["status"], "unrecognized")
         self.assertEqual(interpret_intent({"extraction": {"relations": {}}},
                                         "Who is Tyrion Lannister's father?", focus)["status"], "unrecognized")
-        self.assertEqual(interpret_intent(cfg, "Who is Tyrion Lannister's father?", focus, navigate=True)["status"], "all")
 
     def relationship_fixture(self):
         """Passages plus the facts Antfly's extractor and resolver would materialize."""

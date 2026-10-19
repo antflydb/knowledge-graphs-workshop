@@ -26,6 +26,8 @@ antfly:
   inference_url: http://127.0.0.1:8090
 dataset: pizza-portland
 title: Eleven Portland Oregon pizza places
+# Not shown in the web dashboard yet; still buildable from the CLI.
+dashboard: false
 corpus: metadata.jsonl
 output: ../../data/builds/pizza-portland
 extraction:

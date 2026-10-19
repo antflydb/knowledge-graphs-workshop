@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -16,17 +16,17 @@ from pydantic import BaseModel, ConfigDict, StrictStr
 from kg import dataset
 from kg.antfly import AntflyError
 from kg.dataset_config import digest, load_dataset
-from kg.dataset_decisions import DecisionError, decide_relationship
+from kg.dataset_decisions import RESERVED_LABELS, DecisionError, decide, relationship_labels
 from kg.dataset_inputs import read_manifest
-from kg.search import StaleSearch, focused_search
+from kg.search import StaleSearch, focused_search, overview
 
 ROOT = Path(__file__).resolve().parents[2]
-DATASETS = {
-    "asoiaf": ROOT / "datasets/asoiaf/config.yaml",
-    "pizza-portland": ROOT / "datasets/pizza-portland/config.yaml",
-    "apollo13": ROOT / "datasets/apollo13/config.yaml",
-}
-DatasetName = Literal["asoiaf", "pizza-portland", "apollo13"]
+# Every datasets/<slug>/config.yaml; adding or deleting a dataset directory is all it takes.
+# `dashboard: false` in a config keeps a dataset buildable from the CLI but off the page.
+DATASETS = {path.parent.name: path for path in sorted((ROOT / "datasets").glob("*/config.yaml"))
+            if load_dataset(path).data.get("dashboard", True)}
+LABELS = {"asoiaf": "ASoIaF", "pizza-portland": "Portland pizza", "apollo13": "Apollo 13",
+          "antfly-prs": "Antfly PRs: edge-weight fix"}
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 # Prebuilt from playground/ (`make playground`); committed so nobody needs Node to run it.
 PLAYGROUND = Path(__file__).parent / "static" / "playground"
@@ -34,31 +34,20 @@ PLAYGROUND = Path(__file__).parent / "static" / "playground"
 
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    dataset: DatasetName
+    dataset: StrictStr
     text: StrictStr
     focus_id: StrictStr | None = None
     build_id: StrictStr | None = None
     navigate: bool = False
 
 
-class Span(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    text: StrictStr
-    start: int
-    end: int
-    label: StrictStr
-
-
 class DecideRequest(BaseModel):
-    """Re-classify one extracted relationship: an exact head and tail in one passage."""
+    """Exactly what Decide receives: any input text, an instruction and labels."""
     model_config = ConfigDict(extra="forbid")
-    dataset: DatasetName
-    build_id: StrictStr
-    passage_id: StrictStr
-    head: Span
-    tail: Span
-    instruction: Any = None
-    labels: Any = None
+    dataset: StrictStr
+    input: StrictStr
+    instruction: Any
+    labels: Any
 
 
 class ViewerState:
@@ -102,7 +91,7 @@ app.mount("/playground", StaticFiles(directory=PLAYGROUND, html=True), name="pla
 
 def config(name):
     if name not in DATASETS:
-        raise HTTPException(422, "Select asoiaf, pizza-portland or apollo13")
+        raise HTTPException(422, f"Select one of: {', '.join(DATASETS)}")
     return load_dataset(DATASETS[name]).data
 
 
@@ -126,10 +115,24 @@ def index(request: Request):
     try:
         for name in DATASETS:
             cfg = config(name)
-            defaults[name] = {"title": cfg["title"], "instruction": cfg["relation_decision"]["instruction"]}
+            types, relations = cfg["extraction"]["entities"], cfg["extraction"]["relations"]
+            # Decide's pre-filled boxes: the instruction, and the labels for each (HEAD, TAIL) type pair.
+            defaults[name] = {"title": cfg["title"], "label": LABELS.get(name, cfg["title"]),
+                              "decide_model": cfg["models"]["decide"],
+                              "instruction": cfg["relation_decision"]["instruction"],
+                              "labels": {f"{h}|{t}": relationship_labels(cfg, h, t) for h in types for t in types},
+                              "all_labels": {**{p: spec["description"] for p, spec in relations.items()}, **RESERVED_LABELS}}
     except Exception as exc:
         return failure(exc)
     return templates.TemplateResponse(request=request, name="index.html", context={"defaults": defaults})
+
+
+@app.get("/api/overview")
+def landing(dataset: str):
+    try:
+        return overview(config(dataset))
+    except Exception as exc:
+        return failure(exc)
 
 
 @app.post("/api/search")
@@ -152,26 +155,11 @@ def search(body: SearchRequest):
 
 
 @app.post("/api/decide")
-def decide(body: DecideRequest):
-    """On-demand GLiNER2.5-Decide for one relationship; nothing is written back to the graph."""
+def decision(body: DecideRequest):
+    """On-demand GLiNER2.5-Decide over whatever the page sends; nothing is written back."""
     with state.lock:
         try:
-            cfg = config(body.dataset)
-            try:
-                manifest = dataset.load_build(cfg)
-            except (ValueError, KeyError) as exc:
-                return failure(exc, stale=True)
-            if manifest["build_id"] != body.build_id:
-                raise HTTPException(409, "Build changed; search again before running Decide")
-            af = dataset.database(cfg)
-            try:
-                passage = af.get(manifest["table"], body.passage_id)
-            finally:
-                af.http.close()
-            if passage is None or passage.get("kind") != "passage":
-                raise HTTPException(404, "Indexed passage no longer exists; search again")
-            return decide_relationship(cfg, passage, body.head.model_dump(), body.tail.model_dump(),
-                                       state.provider(cfg), instruction=body.instruction, labels=body.labels)
+            return decide(state.provider(config(body.dataset)), body.input, body.instruction, body.labels)
         except Exception as exc:
             return failure(exc)
 

@@ -1,0 +1,116 @@
+# Experimental timeline example: four Antfly PRs and two release notes, each with
+# one timestamp (merged_at / published_at). Delete this directory to remove it.
+version: 2
+dataset: antfly-prs
+title: Antfly PRs and releases for the antfarm graph edge-weight fix
+corpus: metadata.jsonl
+output: ../../data/builds/antfly-prs
+passages:
+  max_bytes: 550
+  max_words: 75
+  overlap_words: 10
+models:
+  extract: fastino/gliner2.5-base-v1
+  embed: google/embeddinggemma-2
+  decide: fastino/GLiNER2.5-Decide
+revisions:
+  extract: 72ac19b486cd4557424c8d61114e7530c243e9b0
+  embed: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  decide: 7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6
+dimensions: 768
+retrieval:
+  candidates: 40
+  graph_candidates: 100
+  evidence: 5
+  text_reserve: 1
+antfly:
+  target: v0.3.0-rc.1
+  addr: 127.0.0.1:8796
+  health_port: 4296
+  binary_env: ANTFLY_BIN
+  data_dir: ../../data/antfly
+  inference_url: http://127.0.0.1:8090
+extraction:
+  entities:
+  - pull_request
+  - release
+  - software_component
+  - failure
+  - branch
+  threshold: 0.5
+  relations:
+    backports:
+      description: HEAD pull request ports the TAIL change or pull request to another branch.
+      head_types: [pull_request]
+      tail_types: [pull_request, branch]
+    follows_up:
+      description: HEAD pull request continues or completes the work of TAIL pull request.
+      head_types: [pull_request]
+      tail_types: [pull_request]
+    fixes:
+      description: HEAD pull request fixes TAIL failure or software component.
+      head_types: [pull_request]
+      tail_types: [failure, software_component]
+    includes:
+      description: HEAD release includes TAIL pull request.
+      head_types: [release]
+      tail_types: [pull_request]
+    causes:
+      description: HEAD change or failure causes TAIL failure.
+      head_types: [pull_request, failure]
+      tail_types: [failure]
+# Links written in the text itself, read with a pattern (not a model): a document's own
+# heading describes it, and "#752" or ".../pull/752" references another PR.
+explicit_links:
+- type: describes
+  field: title
+  pattern: '^Pull request #(\d+)'
+  name: '#{0}'
+  label: pull_request
+- type: describes
+  field: title
+  pattern: '^Release (v\S+)'
+  name: '{0}'
+  label: release
+- type: references
+  field: text
+  pattern: '(?:#|/pull/)(\d+)\b'
+  name: '#{0}'
+  label: pull_request
+relation_decision:
+  instruction: Choose the relationship supported by this ordered HEAD and TAIL in the passage. Respect direction, negation and uncertainty. Do not use outside knowledge.
+collection:
+  kind: bundled
+  user_agent: AntflyOntologyWorkshop/0.1 (bundled snapshot)
+  request_interval_seconds: 1
+  sources:
+  - id: pr-752
+    title: "Pull request #752: fix antfarm graph edge weight query"
+    url: https://github.com/antflydb/antfly/pull/752
+    path: raw/pr-752.md
+    format: text
+  - id: pr-754
+    title: "Pull request #754: fix(antfarm): omit unset graph edge weight (v0.2.x)"
+    url: https://github.com/antflydb/antfly/pull/754
+    path: raw/pr-754.md
+    format: text
+  - id: pr-755
+    title: "Pull request #755: fix(antfarm): refresh embedded bundle after edge weight fix"
+    url: https://github.com/antflydb/antfly/pull/755
+    path: raw/pr-755.md
+    format: text
+  - id: pr-756
+    title: "Pull request #756: fix(antfarm): refresh embedded edge weight fix (v0.2.x)"
+    url: https://github.com/antflydb/antfly/pull/756
+    path: raw/pr-756.md
+    format: text
+  - id: release-v0.2.3-rc.1
+    title: "Release v0.2.3-rc.1"
+    url: https://github.com/antflydb/antfly/releases/tag/v0.2.3-rc.1
+    path: raw/release-v0.2.3-rc.1.md
+    format: text
+  - id: release-v0.2.3
+    title: "Release v0.2.3"
+    url: https://github.com/antflydb/antfly/releases/tag/v0.2.3
+    path: raw/release-v0.2.3.md
+    format: text

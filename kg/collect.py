@@ -166,6 +166,9 @@ def _atomic_text(path, text):
 def collect(cfg, refresh=False):
     cfg = _data(cfg)
     settings = cfg["collection"]
+    if settings["kind"] == "bundled":
+        # Checked-in sources: nothing to fetch, only verify the snapshot.
+        return {"bundled": True, "sources": len(read_manifest(cfg))}
     manifest = Path(cfg["corpus"])
     existing = read_jsonl(manifest) if manifest.exists() else []
     if len({r.get("id") for r in existing}) != len(existing):

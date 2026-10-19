@@ -63,6 +63,12 @@ class Antfly:
     def query(self, table: str, body: dict) -> dict:
         return self._call("POST", f"/db/v1/tables/{table}/query", json=body)
 
+    def graph_metric(self, table: str, index: str, metric: str, top_k: int) -> list[tuple[str, float]]:
+        """Top nodes by a metric Antfly maintains on the graph index (e.g. degree)."""
+        body = {"limit": 0, "graph_metric": {"index": index, "metric": metric, "top_k": top_k}}
+        result = self.query(table, body)["responses"][0]["graph_metric_results"][metric]
+        return [(row["node"], row["score"]) for row in result["scores"]]
+
     def traverse(self, table: str, index: str, keys: list[str], **options) -> list[dict]:
         """Every path from documents in `table`, one result per reaching path.
 

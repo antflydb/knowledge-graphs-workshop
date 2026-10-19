@@ -44,6 +44,25 @@ def _text(value, name):
         raise ValueError(f"{name} must be a nonempty string")
 
 
+def _explicit_links(links):
+    """Optional links written in the text itself (e.g. "#752"), read with a pattern rather than a model."""
+    if links is None:
+        return
+    if not isinstance(links, list) or not links:
+        raise ValueError("explicit_links must be a nonempty list")
+    for link in links:
+        _mapping(link, {"type", "field", "pattern", "name", "label"}, {"type", "field", "pattern", "name", "label"}, "explicit link")
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", link["type"]) or link["field"] not in {"text", "title"}:
+            raise ValueError("explicit link type must be an identifier and field text or title")
+        try:
+            if re.compile(link["pattern"], re.M).groups < 1:
+                raise ValueError("explicit link pattern needs a capture group")
+        except re.error as exc:
+            raise ValueError(f"Invalid explicit link pattern: {exc}") from exc
+        for key in ("name", "label"):
+            _text(link[key], f"explicit link {key}")
+
+
 @dataclass
 class DatasetConfig:
     path: Path
@@ -62,7 +81,9 @@ def load_dataset(path):
     path = Path(path).expanduser().resolve()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     required = {"version", "dataset", "title", "corpus", "output", "passages", "extraction", "relation_decision", "models", "revisions", "dimensions", "retrieval", "antfly", "collection"}
-    _mapping(data, required, required, "config")
+    _mapping(data, required | {"explicit_links", "dashboard"}, required, "config")
+    if type(data.get("dashboard", True)) is not bool:
+        raise ValueError("dashboard must be true or false")
     if data["version"] != 2:
         raise ValueError("Require dataset config version: 2")
     if not isinstance(data["dataset"], str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", data["dataset"]):
@@ -119,9 +140,10 @@ def load_dataset(path):
     for key, value in (("addr", runtime["addr"]), ("inference_url", runtime["inference_url"].removeprefix("http://"))):
         if not re.fullmatch(r"127\.0\.0\.1:\d+", value) or not 1 <= int(value.split(":")[1]) <= 65535:
             raise ValueError(f"antfly.{key} must be a loopback host:port")
+    _explicit_links(data.get("explicit_links"))
     collection = data["collection"]
     _mapping(collection, {"kind", "sources", "user_agent", "request_interval_seconds", "exclude_sections", "transcript_window"}, {"kind", "sources", "user_agent", "request_interval_seconds"}, "collection")
-    if collection["kind"] not in {"wikipedia", "restaurant_pages", "apollo13"}:
+    if collection["kind"] not in {"wikipedia", "restaurant_pages", "apollo13", "bundled"}:
         raise ValueError("Unknown collection.kind")
     _text(collection["user_agent"], "collection.user_agent")
     if type(collection["request_interval_seconds"]) not in (int, float) or not 0 < collection["request_interval_seconds"] <= 60:
@@ -156,6 +178,9 @@ def load_dataset(path):
             _strings(source["roles"], "source.roles")
             if set(source["roles"]) - {"menu", "about"}:
                 raise ValueError("Restaurant source roles must be menu and/or about")
+        elif kind == "bundled":
+            if source["format"] != "text":
+                raise ValueError("Bundled sources are checked-in Markdown text")
         elif source["format"] not in {"transcript", "text"} or "download_url" not in source:
             raise ValueError("Apollo sources require transcript/text format and publisher download_url")
         for key in ("sha256", "source_sha256"):

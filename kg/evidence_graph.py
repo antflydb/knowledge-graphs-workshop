@@ -19,10 +19,45 @@ def character_span(text, span):
     return {"text": body, "start": len(prefix), "end": len(prefix) + len(body)}
 
 
-def passage_documents(prepared):
-    """Only the passage text and its exact source provenance; Antfly derives the rest."""
-    return {p["id"]: {**{k: v for k, v in p.items() if k != "id"}, "kind": "passage", "passage_id": p["id"]}
-            for p in prepared["passages"]}
+def entity_key(name):
+    """The resolver's key for a surface form ("#754" -> entity/754, "v0.2.3" -> entity/v0_2_3)."""
+    return "entity/" + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def explicit_links(cfg, title, text):
+    """Links written in the text itself ("#752", ".../pull/754"), read with a pattern, not a model.
+
+    Returns {entity key: (type, display name, label)}. Keys match the resolver's, so a
+    link lands on the same node as an extracted mention. Earlier configured links win,
+    so a passage that describes #752 does not also reference it.
+    """
+    found = {}
+    for link in cfg.get("explicit_links") or []:
+        for match in re.finditer(link["pattern"], title if link["field"] == "title" else text, re.M):
+            name = link["name"].format(*match.groups())
+            found.setdefault(entity_key(name), (link["type"], name, link["label"]))
+    return found
+
+
+def passage_documents(cfg, prepared):
+    """Passage text and exact source provenance (plus its timestamp and explicit links, if any).
+
+    Antfly derives everything else. Explicit link targets get a small node document
+    (same key and shape as a resolver-promoted entity) so it can be searched.
+    """
+    docs, targets = {}, {}
+    for p in prepared["passages"]:
+        source = prepared["sources"][p["source_id"]]
+        doc = {**{k: v for k, v in p.items() if k != "id"}, "kind": "passage", "passage_id": p["id"]}
+        if source.get("timestamp"):
+            doc["timestamp"] = source["timestamp"]
+        if cfg.get("explicit_links"):
+            links = explicit_links(cfg, source["title"], p["text"])
+            doc["links"] = [{"type": kind, "target": key} for key, (kind, _, _) in sorted(links.items())]
+            for key, (_, name, label) in links.items():
+                targets.setdefault(key, {"kind": "link_target", "canonical_name": name, "entity_type": label, "aliases": [name]})
+        docs[p["id"]] = doc
+    return {**docs, **targets}
 
 
 def search_request(cfg, text, semantic=True, allowed=None):

@@ -94,7 +94,7 @@ def build_signature(cfg):
     files = ["dataset.py", "dataset_inputs.py", "evidence_graph.py", "schema.py"]
     code = [hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in files]
     return digest([PIPELINE, {key: cfg[key] for key in ("dataset", "extraction", "models", "revisions", "dimensions", "passages")},
-                   settings(cfg), code])
+                   cfg.get("explicit_links"), settings(cfg), code])
 
 
 def prepare(cfg, max_passages=None):
@@ -129,7 +129,7 @@ def build(cfg, max_passages=None):
     """Write plain passages; Antfly extracts, embeds, resolves entities and links the graph."""
     prepared = prepare(cfg, max_passages)
     binary = binary_info(cfg)
-    docs = passage_documents(prepared)
+    docs = passage_documents(cfg, prepared)
     probe = prepared["passages"][0]
     signature = build_signature(cfg)
     content_hash = digest([signature, prepared["corpus_sha256"], prepared["selection"], docs])
@@ -148,7 +148,7 @@ def build(cfg, max_passages=None):
             items = list(docs.items())
             for offset in range(0, len(items), 100):
                 af.batch(table, dict(items[offset:offset + 100]), sync_level="write")
-            print(f"Wrote {len(items)} passages to {table}", flush=True)
+            print(f"Wrote {len(prepared['passages'])} passages ({len(items)} documents) to {table}", flush=True)
         statuses = wait_until_complete(af, table, ("vectors", "graph"))
         observed = hits(af.query(table, search_request(cfg, probe["text"])))
         if probe["id"] not in {h["_id"] for h in observed} or af.get(table, probe["id"]) is None:
@@ -158,7 +158,7 @@ def build(cfg, max_passages=None):
             "config_signature": signature, "corpus_sha256": prepared["corpus_sha256"], "selection": prepared["selection"],
             "table": table, "build_id": content_hash,
             "url": str(af.http.base_url), "content_hash": content_hash,
-            "counts": {"passages": len(docs), "entities": af.count(table) - len(docs),
+            "counts": {"passages": len(prepared["passages"]), "entities": af.count(table) - len(prepared["passages"]),
                        "edges": statuses["graph"].get("edge_count")},
             "seconds": round(time.monotonic() - started, 1),
             "models": cfg["models"], "revisions": cfg["revisions"],

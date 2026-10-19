@@ -1,4 +1,4 @@
-"""On-demand GLiNER2.5-Decide over one extracted relationship, and query entity extraction.
+"""On-demand GLiNER2.5-Decide, and query entity extraction.
 
 The graph itself is built by Antfly's extractor at ingest; nothing here runs at build
 time. Offsets are half-open Python character offsets into the supplied text.
@@ -61,20 +61,19 @@ def relationship_labels(cfg, head_label, tail_label):
     return {**labels, **RESERVED_LABELS}
 
 
-def decide_relationship(cfg, passage, head, tail, models, instruction=None, labels=None):
-    """Ask Decide which relationship, if any, this passage states between two exact mentions."""
-    text = passage["text"]
-    for role, span in (("head", head), ("tail", tail)):
-        _span(text, span)
-        if span.get("label") not in cfg["extraction"]["entities"]:
-            raise ValueError(f"{role} needs a configured entity label")
-    instruction = validate_instruction(cfg["relation_decision"]["instruction"] if instruction is None else instruction)
-    labels = validate_labels(relationship_labels(cfg, head["label"], tail["label"]) if labels is None else labels)
-    classifier_input = (f"Text:\n{text}\n\nHEAD: {head['text']} [{head['label']}]"
-                        f"\nTAIL: {tail['text']} [{tail['label']}]")
-    payload = {"input": classifier_input, "instruction": instruction, "labels": labels}
+def decide(models, text, instruction, labels):
+    """Ask Decide to score every label for this text; the caller chooses all three inputs.
+
+    The page pre-fills an extracted relationship (its passage with HEAD and TAIL
+    lines), the dataset's instruction and the type-compatible labels, but any text
+    works. Nothing is written back to the graph.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Decision input must be a nonempty string")
+    instruction, labels = validate_instruction(instruction), validate_labels(labels)
+    payload = {"input": text, "instruction": instruction, "labels": labels}
     try:
-        result = models.classify(classifier_input, labels, instruction)
+        result = models.classify(text, labels, instruction)
     except Exception as exc:
         raise DecisionError(str(exc), payload, getattr(exc, "status_code", None) or 503) from exc
     scores = result.get("scores") if isinstance(result, dict) else None
