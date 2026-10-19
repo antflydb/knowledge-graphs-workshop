@@ -44,11 +44,6 @@ def _text(value, name):
         raise ValueError(f"{name} must be a nonempty string")
 
 
-def build_signature(cfg):
-    """Only generation settings; retrieval and fresh-question experiments are independent."""
-    return digest({k: cfg[k] for k in ("version", "dataset", "passages", "extraction", "relation_decision", "models", "revisions", "dimensions", "track")} | {"track_settings": cfg["tracks"][cfg["track"]]})
-
-
 @dataclass
 class DatasetConfig:
     path: Path
@@ -62,15 +57,11 @@ class DatasetConfig:
     def output(self):
         return Path(self.data["output"])
 
-    @property
-    def build_signature(self):
-        return build_signature(self.data)
 
-
-def load_dataset(path, track="stable"):
+def load_dataset(path):
     path = Path(path).expanduser().resolve()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    required = {"version", "dataset", "title", "corpus", "output", "passages", "extraction", "relation_decision", "query_decision", "models", "revisions", "dimensions", "retrieval", "tracks", "collection"}
+    required = {"version", "dataset", "title", "corpus", "output", "passages", "extraction", "relation_decision", "models", "revisions", "dimensions", "retrieval", "antfly", "collection"}
     _mapping(data, required, required, "config")
     if data["version"] != 2:
         raise ValueError("Require dataset config version: 2")
@@ -104,20 +95,6 @@ def load_dataset(path, track="stable"):
                 raise ValueError(f"Unknown endpoint types in {name}.{endpoint}")
     _mapping(data["relation_decision"], {"instruction"}, {"instruction"}, "relation_decision")
     _text(data["relation_decision"]["instruction"], "relation_decision.instruction")
-    q = data["query_decision"]
-    _mapping(q, {"instruction", "labels", "results"}, {"instruction", "labels", "results"}, "query_decision")
-    _text(q["instruction"], "query_decision.instruction")
-    if not isinstance(q["labels"], dict) or len(q["labels"]) < 2:
-        raise ValueError("query_decision.labels requires at least two labels")
-    normalized = set()
-    for label, description in q["labels"].items():
-        _text(label, "label")
-        _text(description, f"label {label}")
-        if label.strip() in normalized:
-            raise ValueError("Experimental labels must be unique after stripping whitespace")
-        normalized.add(label.strip())
-    if type(q["results"]) is not int or q["results"] not in (1, 2, 3):
-        raise ValueError("query_decision.results must be 1, 2 or 3")
     for group, index in (("models", 0), ("revisions", 1)):
         _mapping(data[group], MODEL_PINS, MODEL_PINS, group)
         if any(data[group][role] != pin[index] for role, pin in MODEL_PINS.items()):
@@ -130,24 +107,18 @@ def load_dataset(path, track="stable"):
         _positive(r[key], f"retrieval.{key}")
     if type(r["text_reserve"]) is not int or not 0 <= r["text_reserve"] < r["evidence"] <= r["candidates"]:
         raise ValueError("Require 0 <= text_reserve < evidence <= candidates")
-    _mapping(data["tracks"], {"stable", "latest"}, {"stable", "latest"}, "tracks")
-    if track not in data["tracks"]:
-        raise ValueError(f"Unknown track {track!r}; choose stable or latest")
-    common = {"target", "provider", "addr", "health_port", "binary_env", "database"}
-    for name, settings in data["tracks"].items():
-        fields = common | ({"source_commit", "distributable", "inference_url"} if name == "latest" else set())
-        _mapping(settings, fields, fields, f"tracks.{name}")
-        for key in fields - {"health_port", "distributable"}:
-            _text(settings[key], f"tracks.{name}.{key}")
-        if type(settings["health_port"]) is not int or not 1 <= settings["health_port"] <= 65535:
-            raise ValueError("Invalid health_port")
-        expected = ("python", "v0.2.5", "ANTFLY_STABLE_BIN") if name == "stable" else ("antfly", "v0.3.0/main", "ANTFLY_LATEST_BIN")
-        if (settings["provider"], settings["target"], settings["binary_env"]) != expected:
-            raise ValueError(f"tracks.{name} must retain its runtime/provider/binary contract")
-        if not re.fullmatch(r"127\.0\.0\.1:\d+", settings["addr"]) or not 1 <= int(settings["addr"].split(":")[1]) <= 65535:
-            raise ValueError("Track addr must be a loopback host:port")
-        if name == "latest" and (settings["distributable"] is not False or settings["source_commit"] != "c102cbeac5ae8911ffe6a13105731f381285bfc2" or settings["inference_url"] != "http://127.0.0.1:8090"):
-            raise ValueError("latest must retain its explicit unreleased source and inference identity")
+    runtime = data["antfly"]
+    fields = {"target", "addr", "health_port", "binary_env", "data_dir", "inference_url"}
+    _mapping(runtime, fields, fields, "antfly")
+    for key in fields - {"health_port"}:
+        _text(runtime[key], f"antfly.{key}")
+    if type(runtime["health_port"]) is not int or not 1 <= runtime["health_port"] <= 65535:
+        raise ValueError("Invalid antfly.health_port")
+    if (runtime["target"], runtime["binary_env"]) != ("v0.3.0-rc.1", "ANTFLY_BIN"):
+        raise ValueError("antfly must target the v0.3.0-rc.1 release through ANTFLY_BIN")
+    for key, value in (("addr", runtime["addr"]), ("inference_url", runtime["inference_url"].removeprefix("http://"))):
+        if not re.fullmatch(r"127\.0\.0\.1:\d+", value) or not 1 <= int(value.split(":")[1]) <= 65535:
+            raise ValueError(f"antfly.{key} must be a loopback host:port")
     collection = data["collection"]
     _mapping(collection, {"kind", "sources", "user_agent", "request_interval_seconds", "exclude_sections", "transcript_window"}, {"kind", "sources", "user_agent", "request_interval_seconds"}, "collection")
     if collection["kind"] not in {"wikipedia", "restaurant_pages", "apollo13"}:
@@ -205,11 +176,8 @@ def load_dataset(path, track="stable"):
         if "roles" in source:
             _strings(source["roles"], "source.roles")
     cfg = DatasetConfig(path, data)
-    data["config_path"], data["track"] = str(path), track
+    data["config_path"] = str(path)
     data["corpus"] = str(cfg.resolve(data["corpus"]))
-    data["output"] = str(cfg.resolve(data["output"]) / track)
-    for settings in data["tracks"].values():
-        settings["database"] = str(cfg.resolve(settings["database"]))
-    if data["tracks"]["stable"]["database"] == data["tracks"]["latest"]["database"]:
-        raise ValueError("Runtime tracks require separate databases")
+    data["output"] = str(cfg.resolve(data["output"]))
+    runtime["data_dir"] = str(cfg.resolve(runtime["data_dir"]))
     return cfg

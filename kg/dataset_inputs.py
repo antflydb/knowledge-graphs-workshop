@@ -44,7 +44,7 @@ def raw_path(cfg, relative):
 
 def collect_command(cfg):
     cfg = _data(cfg)
-    return f"python -m kg.dataset {cfg['config_path']} --track {cfg['track']} collect"
+    return f"python -m kg.dataset {cfg['config_path']} collect"
 
 
 def read_manifest(cfg):

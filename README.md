@@ -1,232 +1,86 @@
-# Core datasets and interactive graph search
+# Knowledge graphs on Antfly
 
-Three datasets share one model-backed generation/query pipeline and one plain
-HTML graph/search page:
+Turn a pile of plain documents into a searchable knowledge graph with no other
+metadata. We write passages to Antfly v0.3; Antfly runs GLiNER2.5 on each one at
+ingest, embeds it, resolves the entities it mentions and links them into a graph.
+A small web page explores it, and a second tab, **Text to graph**, extracts a graph
+live from whatever sentences you type.
 
-| Dataset | Configuration | Corpus and rights |
-|---|---|---|
-| ASoIaF / Game of Thrones | [`datasets/asoiaf/config.yaml`](datasets/asoiaf/config.yaml) | 56 frozen Wikipedia articles; attributed CC BY-SA 4.0 prose, mixed book/TV continuity |
-| Portland pizza | [`datasets/pizza-portland/config.yaml`](datasets/pizza-portland/config.yaml) | 21 menu/about files covering 11 places; redistribution permission **not verified** |
-| Apollo 13 | [`datasets/apollo13/config.yaml`](datasets/apollo13/config.yaml) | Bounded air-to-ground transcript and NASA-supplied Review Board main-report text |
-
-Each dataset has `config.yaml`, a per-file `metadata.jsonl` and Markdown-only
-`raw/`. Source metadata is provenance, not extracted facts. See the
-[dataset contract](datasets/README.md) and [runtime tracks](workshops/README.md).
+| Dataset | Sources |
+|---|---|
+| `asoiaf` | 56 frozen Wikipedia articles (CC BY-SA 4.0, bundled) |
+| `apollo13` | NASA air-to-ground transcript and Review Board report (bundled) |
+| `pizza-portland` | Menus and about pages for 11 Portland pizzerias (not bundled; see below) |
 
 ## Run
 
-Run from the repository root with Python 3.12, `uv` and Antfly v0.2.5 installed:
+Needs `uv`, Python 3.12 and Antfly **v0.3.0-rc.1**. Set `ANTFLY_BIN` if the `antfly`
+on your `PATH` is older.
 
 ```sh
-uv sync --python 3.12 --extra workshop
-uv run python -m kg.dataset datasets/asoiaf/config.yaml collect
-uv run python -m kg.dataset datasets/asoiaf/config.yaml validate
-uv run python -m kg.dataset datasets/asoiaf/config.yaml prepare
-uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track stable doctor
+uv sync
+antfly inference pull "fastino/gliner2.5-base-v1:safetensors@72ac19b486cd4557424c8d61114e7530c243e9b0"
+antfly inference pull "google/embeddinggemma-2:safetensors@914f7f89142e33e77833254d9c9b90c3cef7303b" --tasks embed
+antfly inference pull "fastino/GLiNER2.5-Decide:safetensors@7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6" --tasks extract
 
-# Separate terminal; leave this database running:
-uv run python -m kg.dataset datasets/asoiaf/config.yaml --track stable db
-
-uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track stable build
-uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track stable query \
-  "Who is Tyrion Lannister's father?"
-uv run --extra workshop python -m kg.dataset datasets/asoiaf/config.yaml --track stable decide \
-  "Who is Tyrion Lannister's father?" --results 1
+make inference    # terminal 1: native inference on :8090
+make db           # terminal 2: Antfly on :8796
+make build        # ~5 min for ASoIaF on an Apple-silicon Mac; DATASET=apollo13 for the other corpus
+make web          # http://127.0.0.1:8000 (graph search and text-to-graph tabs)
 ```
 
-Replace `asoiaf` with `pizza-portland` or `apollo13`. Pizza requires collection
-on each fresh checkout because its raw text is not bundled. Stable is the default
-track; graph is the default query mode. `build --max-passages 64` is a **partial**
-iteration, never a full-dataset qualification. All commands and configuration
-boundaries are described in [datasets/README.md](datasets/README.md).
+`make` lists every target. [datasets/README.md](datasets/README.md) covers the CLI,
+inputs and generated state. The text-to-graph tab is prebuilt from
+[`playground/`](playground/); rebuilding it (`make playground`) is optional and needs pnpm.
 
-The [stable guide](workshops/stable/README.md) uses Python inference and released
-Antfly v0.2.5. The [latest guide](workshops/latest/README.md) requires an explicitly
-selected pinned-main binary plus native inference; it is **unqualified,
-unreleased and not distributable**. There is no Python fallback on latest.
+## How it's stored
 
-## Plain query/graph page
+One table per build, and the only documents we write are passages (text plus exact
+source offsets). Everything else is declared on the table and done by Antfly
+([`kg/schema.py`](kg/schema.py)):
 
-With the selected track's database and a completed build available:
+- **Embeddings:** EmbeddingGemma 2 over `text`, for hybrid BM25 + vector search.
+- **Extraction:** an `extractor` enrichment runs GLiNER2.5 on each passage with the
+  dataset's entity types and relations.
+- **Graph:** each extracted relation becomes a fact edge owned by its passage, so
+  every edge cites its source.
+- **Entities:** a resolver promotes every mention into an `entity/<slug>` document in
+  the same table, with passage → `mentions` → entity edges.
 
-```sh
-uv run --extra workshop uvicorn kg.web.app:app --host 127.0.0.1 --port 8000 --workers 1
-```
-
-Open `http://127.0.0.1:8000`. If the port is occupied, select a free port rather
-than stopping another service. The page starts with dataset selection and a
-question or name. It shows a focused name-group relationship graph and **one
-independently ranked top text match**, not a combined overview of five passages.
-Questions narrow the relationship view when their intent is understood; an
-unrecognized intent or missing extracted relationship is stated explicitly.
-
-Intent recognition uses explicit question frames, not free-form reasoning: for
-example, “Who is NAME's father?”, “Which pizzas have a NAME option?” and
-“What mitigates NAME?”. Unsupported phrasings still return the top text match;
-search an indexed name alone to explore its relationships. Ambiguous literal
-name matches require a choice. Lexical **Explore** suggestions open the selected
-name's neighborhood; they do not establish an alias or answer the original question.
-
-Select a relationship to read its actual supporting source excerpt. The top text
-match is not automatically evidence for a graph connection. Select a connected
-name to explore its neighborhood; Back restores the previous view. Names remain
-type + normalized-spelling groups, not resolved identities or inferred aliases.
-A generic `parent_of` edge alone does not establish that someone is the father.
-No generated answer or generative LLM is used: inference is GLiNER extraction,
-GLiNER-Decide classification and the configured embedding model.
-
-The initially closed **Developer** section holds runtime-track controls, raw
-diagnostics, stored analyses and the optional Decide experiment. No JSON is
-needed to search or inspect relationship evidence. Registered source Markdown
-opens as plain text. This remains a loopback-only trusted tool, not an
-authentication/multi-user product.
-
-Timings appear at the bottom as one muted, bullet-separated line rounded to whole
-milliseconds. API diagnostics retain model-call/cache-hit counts. A partial build
-is visibly partial; missing extraction is not evidence that a relationship is false.
-
-Inside Developer, the optional Decide panel separately compares the last
-successful query with one to three retrieved passages, serially and independently.
-Instructions and JSON label descriptions are editable. Each outcome retains its
-exact input, labels, scores and citation, including complete query/passage model
-graphs. It does not change retrieval order, write graph facts or generate an
-answer. Model scores are not calibrated truth. Full inputs must fit the existing
-512-token/request-size limits; overflow is visible without hidden truncation.
-Stale builds return 409; unavailable native inference stays visible rather than
-switching providers.
+ASoIaF: 4,641 passages, 2,891 entities and 33,385 edges.
 
 ## What the graph means
 
-GLiNER 2.5 base proposes entities and ordered relationship pairs. Decide classifies
-each resolvable typed pair against **all type-compatible configured predicates**
-plus `no_relation` and `unclear`, not just the proposal's original predicate.
-No proposal means no relationship classification call; there is no all-pairs or
-co-occurrence fallback. Rejected and unresolved decisions remain inspectable.
-Accepted assertions are `model_classified_not_verified` predictions, not facts.
+- **Connections:** two entities are connected when passages relate them. The page
+  shows one connection per pair, labelled by the majority predicate across passages
+  (each passage votes), with every passage as evidence.
+- **Reliability:** strongly attested pairs are almost always real relationships, and
+  their majority label is usually right for family, marriage and places. GLiNER often
+  mislabels close associates as family ("Jorah sibling of Daenerys"); the votes and
+  evidence make that visible.
+- **Identity:** an entity is its slugged surface form. "Tyrion's" merges into "Tyrion",
+  but "Tyrion" and "Tyrion Lannister" stay separate. The page lists every matching
+  name group so you can see the split.
+- **Decide:** "Ask Decide" in the evidence panel re-classifies one relationship with
+  GLiNER2.5-Decide on demand. Nothing is written back.
 
-The CLI query modes run the shared extraction/classification pipeline and never
-add indexed query records. CLI graph retrieval attaches matching normalized-name
-buckets and uses graph-scoped hybrid ranking with a text reserve. The webpage
-instead keeps its top text match independent of the focused relationship view.
-Name-only navigation reads existing indexed evidence without re-extracting the
-corpus. Empty evidence stays empty; source text and raw offsets are verified.
+## Sources and licensing
 
-The `surface_bucket_not_disambiguated` warning matters: normalization groups
-same-type/same-surface mentions; it does not resolve homonyms, aliases, surnames,
-pronouns or book/TV continuity. Source titles, Wikipedia categories/links,
-restaurant inventory addresses and transcript roles are not automatically
-semantic edges. Apollo hypotheses must not become Review Board determinations
-merely because a report quotes them. No absence-based dietary/allergen safety
-claim is justified by a menu.
+Code is MIT ([LICENSE](LICENSE)). Data, quotations, model weights and Antfly are not
+covered; see [NOTICE](NOTICE). Every file's origin, hash and rights are in its
+dataset's `metadata.jsonl`.
 
-## Source origins and bundling
+- **Wikipedia** prose keeps its article/revision attribution under CC BY-SA 4.0.
+- **NASA** texts are US Government works; transcript formatting is credited to Heiko
+  Kueffen.
+- **Pizza** sources have no verified redistribution permission. Run
+  `make collect DATASET=pizza-portland` locally; never commit its raw text.
 
-Project code and project-authored documentation use the [MIT license](LICENSE).
-That grant does **not** cover third-party datasets, quotations, model weights,
-dependencies or Antfly. See [NOTICE](NOTICE) for licensing scope and attribution.
+## rc.1 caveats
 
-Exact file hashes, article/revision URLs, fetch times, attribution, modifications
-and rights are recorded in each dataset's `metadata.jsonl`. Preserve that metadata
-with redistributed material. Existing `data/` artifacts are not migrated or deleted.
-
-### Wikipedia
-
-ASoIaF prose originates at [English Wikipedia](https://en.wikipedia.org/), using
-the frozen 56-article/revision inventory recorded in
-[`datasets/asoiaf/metadata.jsonl`](datasets/asoiaf/metadata.jsonl). The bundled
-raw bodies preserve the original normalized article export byte-for-byte.
-Collection does not discover new articles or expand categories. Categories,
-headings, link targets, infoboxes and tables
-are not graph facts. This is not a complete census or a single unified canon.
-
-Bundled prose retains article/revision attribution, modification notices and
-[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), subject to
-[Wikimedia's reuse terms](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use#7._Licensing_of_Content).
-The article license is not blanket clearance for third-party media or quotations.
-
-### Portland pizza: fixed source inventory
-
-Only the following sources are selected. Each place has a menu and about/location
-file, except Ken's single page, which serves both roles. Selected city locations
-and source roles are provenance in the configuration, not injected model prose.
-
-| Place | Menu source | About/location source |
-|---|---|---|
-| Apizza Scholls | https://www.apizzascholls.com/Menus/ | https://www.apizzascholls.com/ |
-| Ken's Artisan Pizza | https://kensartisanpizza.com/pizza | Same page; one file |
-| HOTLIPS Hawthorne | https://www.hotlipspizza.com/menu | https://www.hotlipspizza.com/hawthorne |
-| Life of Pie | https://lifeofpiepizza.com/pdfs/Menu-Life_Of_Pie.pdf | https://lifeofpiepizza.com/ |
-| Red Sauce Pizza | https://www.redsaucepizza.com/menu | https://www.redsaucepizza.com/ |
-| Double Mountain Woodstock | https://doublemountainbrewery.com/wp-content/uploads/2026/10/WS_Menu_10_16_26.pdf | https://doublemountainbrewery.com/woodstock/ |
-| The Blind Onion | https://www.blindonion.com/house.html | https://www.blindonion.com/index.html |
-| Mississippi Pizza | https://mississippipizza.com/mississippi-pizza-menu/ | https://mississippipizza.com/about-mississippi-pizza/ |
-| Stark Street Pizza | https://www.starkstreetpizza.com/stark-street-menu.pdf | https://www.starkstreetpizza.com/ |
-| Pizza Thief NW Vaughn | https://pizzathief.com/menu/ | https://pizzathief.com/ |
-| Amalfi's | https://www.amalfisrestaurant.com/pdf/dinner-menu.pdf | https://www.amalfisrestaurant.com/ |
-
-**No selected pizza source has verified redistribution permission.** Commit only
-its configuration and metadata; `datasets/pizza-portland/raw/` stays ignored and
-local, as do generated builds under `data/`. Never force-add that text. An explicit
-permission covers only its identified source, not every restaurant. PDF menus
-are converted using available text in page order, not OCR; page-level extracted
-character counts and no-text omissions are recorded. With pypdf 6.21.1, Life of
-Pie's second page yields only a 38-character ordering footer, not menu coverage.
-No full image-menu coverage is claimed. The dated Double Mountain URL is the selected snapshot,
-not a pattern for silently substituting a newer menu. Failed/blocked sources
-must remain failures, not synthetic summaries or alternate restaurants.
-
-### Apollo 13
-
-- Air-to-ground source: [curated NASA transcript text](https://apollojournals.org/alsj/a13/AS13_TEC.txt),
-  with [transcription/formatting attribution to Heiko Kueffen](https://apollojournals.org/alsj/a13/a13trans.html)
-  and [NASA NTRS record 20160014370](https://ntrs.nasa.gov/citations/20160014370)
-  ([record API](https://ntrs.nasa.gov/api/citations/20160014370)).
-- Review Board source: [NASA-supplied report fulltext](https://ntrs.nasa.gov/api/citations/19700076776/downloads/19700076776.txt),
-  from [NTRS record 19700076776](https://ntrs.nasa.gov/citations/19700076776),
-  identified as a US Government work with public use permitted.
-
-These two attributed Markdown artifacts are bundled. The transcript retains the
-continuous inclusive MET `055:50:05`–`094:33:21` interval, ending before the next
-`094:33:31 LMP` marker; Windows-1252 is decoded and line endings normalized to LF.
-The supplied wording, garbling and `C02` spelling are preserved. Citations use
-actual MET/speaker and raw character offsets; `CC` means CapCom, not one named
-person. Unknown roles are not repaired. The report includes the supplied front
-matter and Chapters 1–5, not the listed appendices A–H. Printed labels remain
-source text, not guessed PDF-page anchors. There is no onboard/PAO, editorial
-Flight Journal, Vatican or NIST corpus, no PDF copy and no local OCR pipeline.
-
-## Verification status
-
-All three source inventories passed collection, hashes and exact-offset
-preparation. ASoIaF reproduces the preserved 56 bodies byte-for-byte, and all 56
-download hashes match intact preserved HTML. Both NASA artifacts match the
-approved raw/download hashes and continuous transcript bounds.
-The parser recognizes 4,335 primary headers and 111 inline candidates; unknown
-punctuation-delimited/bracketed speakers remain source text, not repaired roles.
-
-The full stable pizza build passed: 21 sources, 360 indexed passages, 3,787
-mentions, 527 proposed ordered pairs, 224 accepted model assertions and 303
-unresolved decisions. Indexed-vector round-trip and every prepared source word's
-coverage/exact raw offsets were checked. The build is non-distributable because
-pizza permission remains unverified. Compiled-token capacity refinement produced
-46 recorded whole-window splits; no source words were truncated.
-
-All 27 dataset boundary tests and six Wikipedia parser/access tests passed,
-including capacity refinement, unknown speakers and off-site cache rejection.
-A current-code 64-passage ASoIaF rebuild also passed indexed-vector checks.
-The actual `make web` default search returned five cited passages and displayed
-its partial-build warning (42 nodes/61 edges). This does not qualify the full corpus.
-The exact public snapshot also passed those 33 tests, source digest/offset checks
-for bundled Wikipedia/NASA text, the expected missing-local-pizza error, and a
-wheel build containing LICENSE and NOTICE. Full ASoIaF/Apollo model builds and
-complete optional-panel/browser qualification are **not completed**. The full
-ASoIaF run was stopped before publication; its local cache is preserved. Do not
-treat this repository as full-corpus or performance qualification. See the
-[execution evidence](workshops/README.md#verification-status).
-
-Latest remains **unqualified**: no explicitly selected main binary is available,
-and the pinned source requires Zig 0.17.0, not the installed 0.16.0. An 8 GiB
-host is not proof of compilation/inference resource admission. Doctor/build
-commands on all three latest configs fail explicitly for the missing native
-binary; query/decide and the browser report the missing qualified build without
-Python fallback.
+- **Default storage engine:** `make db` uses it because, on the Lite engine,
+  artifact-backed graph and embedding workers fail permanently under bulk load.
+- **No model pin:** rc.1 rejects `embedder.model_identity` at table creation, so the
+  embedding model isn't pinned.
+- **Traversal:** deduplicated traversal from a resolver-promoted entity returns
+  nothing, so the client always traverses with paths, undeduplicated.

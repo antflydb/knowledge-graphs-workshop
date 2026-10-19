@@ -1,4 +1,4 @@
-"""Query-only entity focus and cited indexed relationships; no identity resolution."""
+"""Query-only entity focus and cited indexed relationships over Antfly's resolved entity graph."""
 from __future__ import annotations
 
 import re
@@ -9,10 +9,13 @@ from kg import dataset
 from kg.antfly import hits
 from kg.dataset_config import digest
 from kg.dataset_inputs import read_manifest
-from kg.evidence_graph import anchored, entity_key, search_request
+from kg.evidence_graph import character_span, search_request
+from kg.schema import MENTIONS
 
 ENTITY_LIMIT = 2000
-ASSERTION_LIMIT = 500
+NEIGHBOR_LIMIT = 500
+FACT_LIMIT = 10000  # traversal's maximum result count
+MENTION_LIMIT = 5000
 NODE_LIMIT = 50
 EDGE_LIMIT = 100
 
@@ -26,7 +29,8 @@ def normalize_name(text):
 
 
 def entity_record(key, row):
-    return {"id": key, "text": row["text"], "type": row["type"]}
+    """Public fields of a resolver-promoted entity document, with layout whitespace collapsed."""
+    return {"id": key, "text": " ".join(row["canonical_name"].split()), "type": row["entity_type"]}
 
 
 def match_candidates(text, rows):
@@ -63,6 +67,7 @@ def interpret_intent(cfg, text, focus=None, navigate=False):
     question = normalize_name(text).replace("’", "'").rstrip(" ?.!")
     name = normalize_name(focus["text"]).replace("’", "'")
     question = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", "ENTITY", question)
+    question = re.sub(r"\b(?:the|a|an) ENTITY", "ENTITY", question)  # "what affects the oxygen tank"
     if question == "ENTITY" or re.fullmatch(r"(?:show|list)(?: all)? (?:relationships|relations)(?: for| of)? ENTITY", question):
         return {"status": "all", "label": "All indexed relationships", "predicate": None, "direction": "both"}
     frames = [
@@ -119,125 +124,140 @@ def _verified_passage(cfg, sources, key, row):
     return {**row, "passage_id": key, "citation": dataset.citation(source, row)}
 
 
-def _specific_parent(assertion, label):
-    """Conservative explicit wording at the actual ordered endpoint occurrences."""
-    if label not in ("father", "mother"):
-        return True
-    text, head, tail = assertion["text"], assertion["head"], assertion["tail"]
-    hs, he = anchored(text, head)
-    ts, te = anchored(text, tail)
-    # An explicit-looking connector inside a denial or hypothesis cannot
-    # establish the more specific relationship. Err toward no edge.
-    begin, end = min(hs, ts), max(he, te)
-    sentence_start = max(text.rfind(mark, 0, begin) for mark in (".", "!", "?", "\n")) + 1
-    stops = [index for mark in (".", "!", "?", "\n") if (index := text.find(mark, end)) >= 0]
-    sentence = normalize_name(text[sentence_start:min(stops) if stops else len(text)])
-    if stops and text[min(stops)] == "?":
-        return False
-    if re.search(r"\b(?:not|never|no|denied|denies|deny|claimed|claims|claim|rumou?r|supposed|alleged|"
-                 r"might|may|could|would|whether|if|possibly|believed|said|suspected|incorrect|false)\b|n't\b", sentence):
-        return False
-    if he <= ts:
-        connector = normalize_name(text[he:ts]).replace("’", "'")
-        direct = re.fullmatch(r",?\s*(?:(?:is|was) )?(?:the |a )?" + label + r" of\s*", connector)
-        possessive = (connector in ("is", "was") and
-                      re.match(r"^'s " + label + r"\b",
-                               normalize_name(text[te:]).replace("’", "'")))
-        return bool(direct or possessive)
-    if te <= hs:
-        connector = normalize_name(text[te:hs]).replace("’", "'")
-        return bool(re.fullmatch(r"'s " + label + r"(?: (?:is|was))?\s*,?", connector))
-    return False
+def _mentioning_passages(af, manifest, key):
+    nodes = af.traverse(manifest["table"], "graph", [key], edge_types=[MENTIONS], direction="in",
+                        max_depth=1, limit=MENTION_LIMIT)
+    return {node["key"] for node in nodes if node["key"].startswith("passage:")}
+
+
+def _facts(cfg, af, manifest, focus, intent):
+    """Every extracted fact incident on the focus entity, one per owning passage.
+
+    Without node deduplication, traversal returns every reaching path, so parallel
+    facts between the same two entities (from different passages) stay separate.
+    """
+    predicates = [intent["predicate"]] if intent["predicate"] else list(cfg["extraction"]["relations"])
+    directions = {"incoming": ["in"], "outgoing": ["out"], "both": ["out", "in"]}[intent["direction"]]
+    facts, truncated = [], False
+    for direction in directions:
+        nodes = af.traverse(manifest["table"], "graph", [focus["id"]], edge_types=predicates, direction=direction,
+                            max_depth=1, limit=FACT_LIMIT)
+        truncated |= len(nodes) >= FACT_LIMIT
+        for node in nodes:
+            for edge in node.get("path_edges") or []:
+                if edge["from"]["key"] == edge["to"]["key"]:
+                    continue  # self-loops are extraction noise
+                if edge["type"] not in predicates or not edge.get("owner_document"):
+                    raise ValueError("Indexed relationship does not match the requested focus/filter")
+                stored = (edge["from"], edge["to"]) if edge["direction"] == "out" else (edge["to"], edge["from"])
+                facts.append({"source": stored[0]["key"], "target": stored[1]["key"], "predicate": edge["type"],
+                              "passage_id": edge["owner_document"], "score": edge.get("weight"),
+                              "head": edge["metadata"]["source"], "tail": edge["metadata"]["target"]})
+    return facts, truncated
 
 
 def _relationships(cfg, af, manifest, focus, intent, sources):
-    empty = {"nodes": [focus] if focus else [], "edges": [], "omitted_nodes": 0,
-             "omitted_edges": 0, "omitted_assertions": 0, "scan_complete": True}
-    if focus is None or intent["status"] == "unrecognized":
-        return empty, []
-    endpoints = [{"term": focus["id"], "field": field} for field in (
-        ("object_id",) if intent["direction"] == "incoming" else
-        ("subject_id",) if intent["direction"] == "outgoing" else ("subject_id", "object_id"))]
-    filters = [{"term": "assertion", "field": "kind"}, {"disjuncts": endpoints}]
-    if intent["predicate"]:
-        filters.append({"term": intent["predicate"], "field": "predicate"})
-    response = af.query(manifest["table"], {"filter_query": {"conjuncts": filters}, "limit": ASSERTION_LIMIT})
-    assertions = hits(response)
-    total, exact = _total(response, len(assertions))
-    omitted = max(0, total - len(assertions))
+    if focus is None:
+        return {"nodes": [], "edges": [], "omitted_nodes": 0, "omitted_edges": 0, "scan_complete": True}, []
+    entities = {focus["id"]: af.get(manifest["table"], focus["id"])}
+    summary = {"aliases": sorted({" ".join(a.split()) for a in entities[focus["id"]].get("aliases") or [focus["text"]]}),
+               "passages": len(_mentioning_passages(af, manifest, focus["id"])), "predicates": {}}
+    if intent["status"] == "unrecognized":
+        return {"nodes": [focus], "edges": [], "omitted_nodes": 0, "omitted_edges": 0,
+                "scan_complete": True, "focus_summary": summary}, []
+    facts, truncated = _facts(cfg, af, manifest, focus, intent)
     notes = []
-    if omitted or not exact:
-        notes.append(f"Relationship scan bounded at {ASSERTION_LIMIT} assertions; "
-                     + (f"{omitted} assertions omitted." if exact else "additional assertions may be omitted."))
-    nodes, triples, passages = {focus["id"]: focus}, {}, {}
-    specificity_excluded = 0
-    for assertion in assertions:
-        # Never trust a query hit as an assertion with arbitrary endpoints.
-        if assertion.get("kind") != "assertion":
-            raise ValueError("Indexed relationship query returned a non-assertion")
-        subject, obj = assertion["subject_id"], assertion["object_id"]
-        predicate = assertion["predicate"]
-        if (predicate not in cfg["extraction"]["relations"]
-                or subject != entity_key(assertion["head"]["label"], assertion["head"]["text"])
-                or obj != entity_key(assertion["tail"]["label"], assertion["tail"]["text"])):
-            raise ValueError("Indexed relationship endpoints differ from their typed source mentions")
-        if ((intent["direction"] == "incoming" and obj != focus["id"])
-                or (intent["direction"] == "outgoing" and subject != focus["id"])
-                or focus["id"] not in (subject, obj)
-                or (intent["predicate"] and predicate != intent["predicate"])):
-            raise ValueError("Indexed relationship does not match the requested focus/filter")
-        # The canonical key resolves the actual indexed passage, not a best text match.
-        _verified_passage(cfg, sources, assertion["_id"], assertion)
-        source = sources[assertion["source_id"]]
-        key = "passage:" + digest([assertion["source_id"], source["sha256"],
-                                  assertion["source_start"], assertion["source_end"], assertion["text"]])[:24]
-        if key not in passages:
-            passage = af.get(manifest["table"], key)
-            if passage is None or passage.get("kind") != "passage":
-                raise ValueError("Indexed relationship has no supporting indexed passage")
-            passages[key] = _verified_passage(cfg, sources, key, passage)
-        passage = passages[key]
-        stored = {k: v for k, v in assertion.items() if k in (
-            "head", "tail", "predicate", "score", "status", "decision_index")}
-        if (passage["text"] != assertion["text"] or passage["source_id"] != assertion["source_id"]
-                or passage["source_start"] != assertion["source_start"] or passage["source_end"] != assertion["source_end"]
-                or stored not in passage["analysis"]["assertions"]):
-            raise ValueError("Indexed relationship is not supported by the stored passage analysis")
-        anchored(passage["text"], assertion["head"])
-        anchored(passage["text"], assertion["tail"])
-        if not _specific_parent(assertion, intent["label"]):
-            specificity_excluded += 1
+    if truncated:
+        notes.append(f"Relationship scan bounded at {FACT_LIMIT} facts; more may exist.")
+    passages, wanted = {}, sorted({fact["passage_id"] for fact in facts})
+    for offset in range(0, len(wanted), 100):
+        batch = wanted[offset:offset + 100]
+        for row in hits(af.query(manifest["table"], {"filter_query": {"disjuncts": [
+                {"term": key, "field": "passage_id"} for key in batch]}, "limit": len(batch)})):
+            passages[row["_id"]] = _verified_passage(cfg, sources, row["_id"],
+                {k: v for k, v in row.items() if not k.startswith("_")})
+    if set(wanted) - passages.keys():
+        raise ValueError("A relationship's owning passage is missing from the index")
+    # One connection per entity pair. Each passage's extracted fact is a vote; the
+    # majority predicate and direction label the connection. Single-passage labels
+    # are noisy, but the pair and its majority label are usually right.
+    edges, unanchored = {}, 0
+    for fact in facts:
+        passage = passages[fact["passage_id"]]
+        try:
+            head = {**character_span(passage["text"], fact["head"]), "label": fact["head"].get("label")}
+            tail = {**character_span(passage["text"], fact["tail"]), "label": fact["tail"].get("label")}
+        except ValueError:
+            unanchored += 1
             continue
-        for eid in (subject, obj):
-            if eid not in nodes:
-                entity = af.get(manifest["table"], eid)
-                if entity is None or entity.get("kind") != "entity":
-                    raise ValueError("Indexed relationship entity is missing")
-                nodes[eid] = entity_record(eid, entity)
-        triple = (subject, predicate, obj)
-        edge = triples.setdefault(triple, {"id": "relationship:" + digest(triple)[:24],
-            "source": subject, "target": obj, "predicate": predicate,
-            "label": predicate.replace("_", " "), "evidence": []})
-        if key not in {row["passage_id"] for row in edge["evidence"]}:
+        pair = tuple(sorted((fact["source"], fact["target"])))
+        edge = edges.setdefault(pair, {"id": "relationship:" + digest(pair)[:24], "evidence": [], "facts": []})
+        edge["facts"].append({"passage_id": fact["passage_id"], "head": head, "tail": tail, "score": fact["score"],
+                              "predicate": fact["predicate"], "source": fact["source"], "target": fact["target"]})
+        if fact["passage_id"] not in {row["passage_id"] for row in edge["evidence"]}:
             edge["evidence"].append(passage)
+    for edge in edges.values():
+        # Most confident extractions first; evidence follows that order.
+        edge["facts"].sort(key=lambda fact: -(fact["score"] or 0))
+        order = {key: index for index, key in reversed(list(enumerate(f["passage_id"] for f in edge["facts"])))}
+        edge["evidence"].sort(key=lambda row: order[row["passage_id"]])
+        votes = {}
+        for fact in edge["facts"]:
+            key = (fact["predicate"], fact["source"], fact["target"])
+            votes[key] = votes.get(key, 0) + 1
+        ranked = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
+        (predicate, source, target), _ = ranked[0]
+        edge.update(source=source, target=target, predicate=predicate, label=predicate.replace("_", " "),
+                    support=len(edge["facts"]), votes=[{"predicate": p, "source": s, "target": t, "count": n}
+                                                       for (p, s, t), n in ranked])
+        for key in (edge["source"], edge["target"]):
+            if key not in entities:
+                entities[key] = af.get(manifest["table"], key)
+                if entities[key] is None:
+                    raise ValueError("Indexed relationship entity is missing")
+    if unanchored:
+        notes.append(f"{unanchored} extracted facts were skipped because their spans do not match the passage text.")
     if intent["label"] in ("father", "mother"):
-        notes.append(f"Only explicit {intent['label']}-wording at both source mentions qualifies; "
-                     f"generic parent_of does not establish {intent['label']} ({specificity_excluded} assertions excluded).")
-    # Retain complete edges, not orphan nodes, when imposing display bounds.
+        notes.append("parent_of does not distinguish a father from a mother; these are all extracted parents.")
+    nodes = {key: entity_record(key, row) for key, row in entities.items()}
+    # Retain complete edges, not orphan nodes, when imposing display bounds;
+    # the best-supported relationships survive the bound.
     selected_nodes, selected_edges = {focus["id"]: focus}, []
-    for triple in sorted(triples):
-        edge = triples[triple]
+    for pair in sorted(edges, key=lambda p: (-edges[p]["support"], p)):
+        edge = edges[pair]
         new_ids = {edge["source"], edge["target"]} - selected_nodes.keys()
         if len(selected_edges) >= EDGE_LIMIT or len(selected_nodes) + len(new_ids) > NODE_LIMIT:
             continue
         selected_nodes.update((eid, nodes[eid]) for eid in sorted(new_ids))
         selected_edges.append(edge)
+    for edge in edges.values():
+        summary["predicates"].setdefault(edge["predicate"], {"relationships": 0, "facts": 0})["relationships"] += 1
+        for fact in edge["facts"]:
+            summary["predicates"].setdefault(fact["predicate"], {"relationships": 0, "facts": 0})["facts"] += 1
+    summary["predicates"] = dict(sorted(summary["predicates"].items()))
     graph = {"nodes": list(selected_nodes.values()), "edges": selected_edges,
-             "omitted_nodes": len(nodes) - len(selected_nodes), "omitted_edges": len(triples) - len(selected_edges),
-             "omitted_assertions": omitted, "scan_complete": exact and not omitted}
+             "omitted_nodes": len(nodes) - len(selected_nodes), "omitted_edges": len(edges) - len(selected_edges),
+             "scan_complete": not truncated, "focus_summary": summary}
     if graph["omitted_nodes"] or graph["omitted_edges"]:
         notes.append(f"Display omits {graph['omitted_nodes']} nodes and {graph['omitted_edges']} relationships.")
     return graph, notes
+
+
+def name_groups(cfg, af, manifest, names, limit=12):
+    """Every entity node sharing a word with these names, unmerged, with its footprint."""
+    terms = sorted({term for name in names for term in re.findall(r"\w+", name, flags=re.UNICODE)})
+    if not terms:
+        return []
+    rows = hits(af.query(manifest["table"], {
+        "full_text_search": {"disjuncts": [{"match": term, "field": "aliases"} for term in terms]}, "limit": limit}))
+    groups = []
+    for row in rows:
+        neighbors = af.traverse(manifest["table"], "graph", [row["_id"]], edge_types=list(cfg["extraction"]["relations"]),
+                                direction="both", max_depth=1, limit=NEIGHBOR_LIMIT)
+        groups.append({**entity_record(row["_id"], row), "aliases": sorted({" ".join(a.split()) for a in row.get("aliases") or []}),
+                       "passages": len(_mentioning_passages(af, manifest, row["_id"])),
+                       "neighbors": len({node["key"] for node in neighbors} - {row["_id"]})})
+    return sorted(groups, key=lambda group: (-group["passages"], group["text"]))
 
 
 def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigate=False):
@@ -260,8 +280,7 @@ def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigat
         focus_lookup_started = time.perf_counter()
         if focus_id is not None:
             entity = af.get(manifest["table"], focus_id)
-            if (entity is None or entity.get("kind") != "entity"
-                    or focus_id != entity_key(entity["type"], entity["text"])):
+            if entity is None or "canonical_name" not in entity:
                 raise ValueError("Focus must be an indexed entity in the selected build")
             focus = entity_record(focus_id, entity)
             if not navigating and not match_candidates(text, [focus]):
@@ -270,14 +289,13 @@ def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigat
         if navigating:
             text = focus["text"]
             retrieval_started = time.perf_counter()
-            ranking = hits(af.query(manifest["table"], search_request(cfg, text)))
+            ranking = hits(af.query(manifest["table"], search_request(cfg, text, semantic=False)))
             results = [_verified_passage(cfg, sources, row["_id"],
                        {"score": row.get("_score"), **{k: v for k, v in row.items() if not k.startswith("_")}})
                        for row in ranking[:cfg["retrieval"]["evidence"]]]
             packet = {"build_id": manifest["build_id"], "partial": manifest["selection"]["partial"],
-                      "query": {"text": text, "analysis": None}, "results": results,
-                      "timings": {name: {"ms": 0, "cache_hits": 0, "model_calls": 0, "skipped": True}
-                                  for name in ("extraction", "relations", "embedding")}}
+                      "query": {"text": text, "entities": []}, "results": results,
+                      "timings": {"extraction": {"ms": 0, "skipped": True}}}
             packet["timings"]["retrieval"] = {"ms": round((time.perf_counter() - retrieval_started) * 1000, 2)}
             packet["timings"]["focus"] = {"ms": round(focus_lookup_ms, 2)}
             candidates, omitted_candidates, candidate_notes = [], 0, []
@@ -292,22 +310,17 @@ def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigat
             candidate_started = time.perf_counter()
             terms = sorted(set(re.findall(r"\w+", text, flags=re.UNICODE)))
             response = af.query(manifest["table"], {
-                "full_text_search": {"disjuncts": [{"match": term, "field": "text"} for term in terms]},
-                "filter_query": {"term": "entity", "field": "kind"}, "limit": ENTITY_LIMIT})
+                "full_text_search": {"disjuncts": [{"match": term, "field": "aliases"} for term in terms]},
+                "limit": ENTITY_LIMIT})
             indexed = hits(response)
             total, exact = _total(response, len(indexed))
             omitted_candidates = max(0, total - len(indexed))
             candidates_complete = exact and not omitted_candidates
             rows = {row["_id"]: entity_record(row["_id"], row) for row in indexed}
-            # Exact typed lookup supplements a bounded name scan; it does not merge names.
-            for span in packet["query"]["analysis"]["entities"]:
-                if span["score"] < cfg["extraction"]["threshold"]:
-                    continue
-                key = entity_key(span["label"], span["text"])
-                if key not in rows:
-                    entity = af.get(manifest["table"], key)
-                    if entity is not None and entity.get("kind") == "entity":
-                        rows[key] = entity_record(key, entity)
+            # Exact alias lookup supplements a bounded name scan; it does not merge names.
+            spans = [span["text"] for span in packet["query"]["entities"]]
+            for row in dataset.entities_by_surface(af, manifest, spans):
+                rows.setdefault(row["_id"], entity_record(row["_id"], row))
             candidates = match_candidates(text, rows.values())
             # These are lexical Explore choices, never aliases or resolved
             # candidates. Clicking one must explicitly navigate to its name.
@@ -315,8 +328,11 @@ def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigat
             omitted_suggestions = (max(0, len(indexed) - len(suggestions)) + omitted_candidates
                                    if not candidates else 0)
             # A bounded scan cannot prove an apparently unique name is unambiguous.
-            if focus is None:
-                focus = candidates[0] if len(candidates) == 1 and exact and not omitted_candidates else None
+            if focus is None and exact and not omitted_candidates:
+                # Several names can appear in one question ("father", "Tyrion Lannister");
+                # prefer the only one the question's relationship frame is about.
+                about = [row for row in candidates if interpret_intent(cfg, text, row)["status"] == "focused"]
+                focus = candidates[0] if len(candidates) == 1 else about[0] if len(about) == 1 else None
             candidate_notes = []
             if suggestions:
                 candidate_notes.append("Lexical name suggestions are exploration choices, not resolved identities.")
@@ -353,7 +369,11 @@ def focused_search(cfg, text, models=None, focus_id=None, build_id=None, navigat
             status = f"{len(graph['edges'])} sourced model-predicted relationships; not independently verified."
         if packet["partial"]:
             notes.append("This is a partial build; missing relationships do not establish absence in the full corpus.")
-        packet.update(top_result=packet["results"][0] if packet["results"] else None,
+        groups_started = time.perf_counter()
+        groups = name_groups(cfg, af, manifest, [focus["text"]] if focus else
+                             [row["text"] for row in candidates + suggestions] or [text])
+        packet["timings"]["name_groups"] = {"ms": round((time.perf_counter() - groups_started) * 1000, 2)}
+        packet.update(top_result=packet["results"][0] if packet["results"] else None, name_groups=groups,
                       focus=focus, focus_candidates=candidates if focus is None else [],
                       focus_candidates_omitted=omitted_candidates,
                       focus_candidates_complete=candidates_complete, intent=intent,

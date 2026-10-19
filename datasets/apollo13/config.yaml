@@ -17,24 +17,13 @@ retrieval:
   graph_candidates: 100
   evidence: 5
   text_reserve: 1
-tracks:
-  stable:
-    target: v0.2.5
-    provider: python
-    addr: 127.0.0.1:8795
-    health_port: 4295
-    binary_env: ANTFLY_STABLE_BIN
-    database: ../../data/antfly/stable/graph.aflite
-  latest:
-    target: v0.3.0/main
-    provider: antfly
-    addr: 127.0.0.1:8796
-    health_port: 4296
-    binary_env: ANTFLY_LATEST_BIN
-    database: ../../data/antfly/latest/graph.aflite
-    source_commit: c102cbeac5ae8911ffe6a13105731f381285bfc2
-    distributable: false
-    inference_url: http://127.0.0.1:8090
+antfly:
+  target: v0.3.0-rc.1
+  addr: 127.0.0.1:8796
+  health_port: 4296
+  binary_env: ANTFLY_BIN
+  data_dir: ../../data/antfly
+  inference_url: http://127.0.0.1:8090
 dataset: apollo13
 title: Apollo 13 communications and Review Board
 corpus: metadata.jsonl
@@ -91,17 +80,6 @@ relation_decision:
     contemporaneous hypotheses are not board determinations. A report quoting an earlier
     suspicion remains suspicion. Do not infer causation from co-mention. Context is
     provenance, not extra facts; CC is a role, not one person.'
-query_decision:
-  instruction: Compare the query and passage with their provenance. Earlier hypotheses
-    versus later findings are not automatically contradictory. Use only supplied text
-    and model-predicted graphs.
-  labels:
-    supports: Explicitly supports the claim in matching context.
-    contradicts: Explicitly contradicts the claim in matching context, not merely
-      an earlier hypothesis.
-    not_comparable: Different event, time or claim; no meaningful comparison.
-    unclear: The evidence is ambiguous or insufficient.
-  results: 1
 collection:
   kind: apollo13
   user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)

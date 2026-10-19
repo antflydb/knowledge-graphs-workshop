@@ -17,24 +17,13 @@ retrieval:
   graph_candidates: 100
   evidence: 5
   text_reserve: 1
-tracks:
-  stable:
-    target: v0.2.5
-    provider: python
-    addr: 127.0.0.1:8795
-    health_port: 4295
-    binary_env: ANTFLY_STABLE_BIN
-    database: ../../data/antfly/stable/graph.aflite
-  latest:
-    target: v0.3.0/main
-    provider: antfly
-    addr: 127.0.0.1:8796
-    health_port: 4296
-    binary_env: ANTFLY_LATEST_BIN
-    database: ../../data/antfly/latest/graph.aflite
-    source_commit: c102cbeac5ae8911ffe6a13105731f381285bfc2
-    distributable: false
-    inference_url: http://127.0.0.1:8090
+antfly:
+  target: v0.3.0-rc.1
+  addr: 127.0.0.1:8796
+  health_port: 4296
+  binary_env: ANTFLY_BIN
+  data_dir: ../../data/antfly
+  inference_url: http://127.0.0.1:8090
 dataset: pizza-portland
 title: Eleven Portland Oregon pizza places
 corpus: metadata.jsonl
@@ -86,14 +75,6 @@ relation_decision:
     Do not infer ingredients, dietary or allergen safety from absence. Do not derive
     ownership from branding or metadata. Source context is provenance, not additional
     facts.
-query_decision:
-  instruction: Judge whether the passage explicitly addresses the query’s menu requirements.
-    Do not infer dietary/allergen safety or availability from absence.
-  labels:
-    relevant: Explicit menu evidence addresses the query requirements.
-    not_relevant: The passage concerns other menu items or requirements.
-    unclear: The requested menu requirement is not established.
-  results: 1
 collection:
   kind: restaurant_pages
   user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)

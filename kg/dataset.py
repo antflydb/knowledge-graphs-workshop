@@ -1,33 +1,30 @@
-"""Manifest-backed core datasets: collection, generation and native graph retrieval."""
+"""Manifest-backed core datasets: collection, Antfly-native graph builds and retrieval."""
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from contextlib import contextmanager
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
 import shutil
-import sqlite3
 import subprocess
 import time
 
 import httpx
 from kg.antfly import Antfly, hits
 from kg.dataset_config import digest, load_dataset
-from kg.dataset_inputs import prepare_inputs, read_manifest, windows
-from kg.dataset_decisions import extract_chunk, differentiate_relations, decide_passage, _overflow
-from kg.evidence_graph import anchored, entity_key, graph_documents, search_request, projection
-from kg.schema import table_schema
+from kg.dataset_inputs import prepare_inputs, read_manifest
+from kg.dataset_decisions import query_entities
+from kg.evidence_graph import passage_documents, search_request
+from kg.schema import MENTIONS, passage_table
 
-PIPELINE = 2
+PIPELINE = 4
+READY_TIMEOUT_SECONDS = 3600
 
 
 def settings(cfg):
-    return cfg["tracks"][cfg["track"]]
+    return cfg["antfly"]
 
 
 def save(path, value):
@@ -38,77 +35,10 @@ def save(path, value):
     temporary.replace(path)
 
 
-def create_models(cfg, model_identity=None):
-    if settings(cfg)["provider"] == "python":
-        try:
-            import importlib.util
-            if importlib.util.find_spec("gliner2") is None:
-                raise ImportError("Missing stable inference dependencies; use uv run --extra workshop python -m kg.dataset ...")
-            from kg.workshop_python import PythonModels
-            return PythonModels(cfg["models"], device=os.environ.get("WORKSHOP_DEVICE", "cpu"), revisions=cfg["revisions"])
-        except ImportError as error:
-            raise ImportError("Stable inference requires uv run --extra workshop python -m kg.dataset ...") from error
+def create_models(cfg):
+    """Client for on-demand inference (query entities, interactive Decide), never the build."""
     from kg.workshop_native import NativeModels
-    return NativeModels(cfg["models"], base_url=settings(cfg)["inference_url"], model_identity=model_identity, revisions=cfg["revisions"])
-
-
-@contextmanager
-def provider(cfg, model_identity=None):
-    model = create_models(cfg, model_identity)
-    try:
-        yield model
-    finally:
-        model.close()
-
-
-def embedding_identity(metadata):
-    return metadata.get("observed", {}).get("embed", {}).get("model_identity")
-
-
-class Cache:
-    """One generated SQLite artifact per track; no source/extraction/vector JSONL copies."""
-    def __init__(self, cfg, expected_identity=None):
-        root = Path(cfg["output"])
-        root.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(root / "model-cache.sqlite")
-        self.db.execute("CREATE TABLE IF NOT EXISTS calls (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        provider_path = Path(__file__).with_name("workshop_" + ("python" if settings(cfg)["provider"] == "python" else "native") + ".py")
-        lock_path = Path(__file__).parent.parent / "uv.lock"
-        runtime = [hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                   hashlib.sha256(Path(__file__).with_name("dataset_decisions.py").read_bytes()).hexdigest(), hashlib.sha256(provider_path.read_bytes()).hexdigest(), hashlib.sha256(lock_path.read_bytes()).hexdigest()]
-        self.salt = [PIPELINE, settings(cfg), cfg["models"], cfg["revisions"], runtime]
-        self.provenance, self.expected_identity = {}, expected_identity
-        self.hits, self.misses = Counter(), Counter()
-
-    def call(self, operation, args, run, model):
-        key = digest([self.salt, operation, args])
-        found = self.db.execute("SELECT value FROM calls WHERE key=?", (key,)).fetchone()
-        if found:
-            self.hits[operation] += 1
-            entry = json.loads(found[0])
-        else:
-            self.misses[operation] += 1
-            entry = {"result": run(), "provenance": model.metadata}
-            self.db.execute("INSERT INTO calls VALUES (?, ?)", (key, json.dumps(entry, allow_nan=False)))
-            self.db.commit()
-        metadata = entry["provenance"]
-        if operation == "embed":
-            previous = embedding_identity(self.provenance.get(operation, {})) or self.expected_identity
-            current = embedding_identity(metadata)
-            if previous is not None and current != previous:
-                raise ValueError("Embedding artifact identity differs from the indexed vector space")
-        self.provenance[operation] = metadata
-        return entry["result"]
-
-    def close(self):
-        self.db.close()
-
-
-def vectors_checked(vectors, count, dimensions):
-    if len(vectors) != count or any(len(v) != dimensions or any(not math.isfinite(x) for x in v) or sum(x*x for x in v) == 0 for v in vectors):
-        raise ValueError("Invalid embedding count, dimension or finite/nonzero vector")
-    return vectors
-
+    return NativeModels(cfg["models"], base_url=settings(cfg)["inference_url"], revisions=cfg["revisions"])
 
 
 def native_binary(configured):
@@ -116,10 +46,10 @@ def native_binary(configured):
         path = Path(configured).expanduser()
         if path.is_file():
             return str(path)
-        raise ValueError("Configured antfly.binary does not exist")
+        raise ValueError(f"ANTFLY_BIN does not exist: {path}")
     resolved = shutil.which("antfly")
     if not resolved:
-        raise ValueError("Install Antfly CLI or set antfly.binary to a released native binary")
+        raise ValueError("Install the Antfly CLI or set ANTFLY_BIN to a v0.3 native binary")
     # Resolve npm's native package without invoking its Node server wrapper.
     actual = Path(resolved).resolve()
     if actual.suffix in {".js", ".mjs", ".cjs"} or b"node" in actual.open("rb").read(100):
@@ -131,39 +61,40 @@ def native_binary(configured):
                 return str(candidates[0])
             if parent == Path("/"):
                 break
-        raise ValueError("Set antfly.binary to the native binary so stopping db does not orphan the server")
+        raise ValueError("Set ANTFLY_BIN to the native binary so stopping db does not orphan the server")
     return str(actual)
 
 
-
 def binary_info(cfg):
-    track = settings(cfg)
-    configured = os.environ.get(track["binary_env"])
-    if cfg["track"] == "latest" and not configured:
-        raise ValueError("Set ANTFLY_LATEST_BIN to the binary built from the pinned main snapshot; never fall back to stable")
-    path = native_binary(configured)
+    runtime = settings(cfg)
+    path = native_binary(os.environ.get(runtime["binary_env"]))
     version = subprocess.run([path, "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout.strip()
-    if cfg["track"] == "stable" and not re.search(r"\b0\.2\.5\b", version):
-        raise ValueError("Stable workshop requires Antfly v0.2.5")
-    if cfg["track"] == "latest" and re.search(r"\b0\.2\.\d+\b", version):
-        raise ValueError("Latest workshop requires a main/v0.3 build, not a v0.2 release executable")
-    return {"path": path, "version": version, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
-            "target_source_commit": track.get("source_commit"), "binary_commit_attested": False}
-
-
+    # Artifact-backed graph indexes, extractor enrichments and resolvers first shipped in v0.3.
+    if not re.search(r"\b0\.(?:[3-9]|\d{2,})\.\d+", version):
+        raise ValueError(f"The workshop requires Antfly {runtime['target']} or later; {path} reports {version!r}. "
+                         f"Set {runtime['binary_env']} to a v0.3 binary.")
+    return {"path": path, "version": version, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
 
 
 def database(cfg):
     return Antfly("http://" + settings(cfg)["addr"], timeout=300)
 
 
+def entities_by_surface(af, manifest, texts, limit=100):
+    """Resolver-promoted entities with one of these exact surface forms as an alias."""
+    texts = sorted({text for text in texts if text.strip()})
+    if not texts:
+        return []
+    return hits(af.query(manifest["table"], {
+        "filter_query": {"disjuncts": [{"term": text, "field": "aliases"} for text in texts]}, "limit": limit}))
+
+
 def build_signature(cfg):
-    files = ["dataset.py", "dataset_inputs.py", "dataset_decisions.py", "evidence_graph.py", "schema.py",
-             "workshop_python.py", "workshop_native.py"]
+    """What the indexed graph depends on: passages, extraction schema, models and table layout."""
+    files = ["dataset.py", "dataset_inputs.py", "evidence_graph.py", "schema.py"]
     code = [hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in files]
-    lock = hashlib.sha256((Path(__file__).parent.parent / "uv.lock").read_bytes()).hexdigest()
-    return digest([PIPELINE, {key: cfg[key] for key in ("dataset", "extraction", "relation_decision", "models", "revisions", "dimensions", "passages")},
-                   settings(cfg), code, lock])
+    return digest([PIPELINE, {key: cfg[key] for key in ("dataset", "extraction", "models", "revisions", "dimensions", "passages")},
+                   settings(cfg), code])
 
 
 def prepare(cfg, max_passages=None):
@@ -172,139 +103,66 @@ def prepare(cfg, max_passages=None):
     return prepare_inputs(cfg, max_passages=max_passages)
 
 
-def split_passage(cfg, sources, row, error, stage):
-    """Split a whole-word window, preserving exact source occurrence identity."""
-    count = len(re.findall(r"\S+", row["text"]))
-    if count < 2:
-        raise ValueError(f"One source word cannot fit {stage} capacity at {row['source_id']}:{row['source_start']}:{row['source_end']}: {error}") from error
-    max_words = (count + 1) // 2
-    limits = {**cfg["passages"], "max_words": max_words,
-              "overlap_words": min(cfg["passages"]["overlap_words"], max_words - 1)}
-    children = []
-    for begin, end in windows(row["text"], **limits):
-        text = row["text"][begin:end]
-        start, stop = row["source_start"] + begin, row["source_start"] + end
-        key = "passage:" + digest([row["source_id"], sources[row["source_id"]]["sha256"], start, stop, text])[:24]
-        children.append({**row, "id": key, "text": text, "source_start": start, "source_end": stop})
-    split = {"passage_id": row["id"], "source_id": row["source_id"], "stage": stage,
-             "source_start": row["source_start"], "source_end": row["source_end"],
-             "reason": str(error), "children": [child["id"] for child in children]}
-    return children, split
-
-
-def extract_passages(cfg, prepared, cache, model):
-    """Refine capacity-rejected windows without dropping or rewriting source words."""
-    from collections import deque
-    pending = deque(prepared["passages"])
-    selected, extracted, splits = [], {}, []
-    maximum = prepared["selection"]["max_passages"]
-    while pending and (maximum is None or len(selected) < maximum):
-        row = pending.popleft()
-        if row["id"] in extracted:
-            continue
-        try:
-            result = extract_chunk(cfg, row["text"], cache, model)
-        except (ValueError, RuntimeError) as error:
-            if not _overflow(error):
-                raise
-            children, split = split_passage(cfg, prepared["sources"], row, error, "extraction")
-            splits.append(split)
-            pending.extendleft(reversed(children))
-            continue
-        selected.append(row)
-        extracted[row["id"]] = result
-        if len(selected) % 50 == 0:
-            print(f"Extracted {len(selected)} passages ({len(pending)} windows remaining)", flush=True)
-    prepared["passages"] = selected
-    prepared["selection"] = {**prepared["selection"], "passages": len(selected), "capacity_splits": splits}
-    return extracted
-
-
-def analyze_passages(cfg, prepared, cache):
-    """Run separate model phases, refining only windows rejected by capacity."""
-    remaining = prepared["passages"]
-    analyses, accepted, splits = {}, {}, []
-    while remaining:
-        batch = {"sources": prepared["sources"], "passages": remaining,
-                 "selection": {"max_passages": None}}
-        with provider(cfg) as model:
-            extracted = extract_passages(cfg, batch, cache, model)
-        splits.extend(batch["selection"]["capacity_splits"])
-        remaining = []
-        with provider(cfg) as model:
-            for index, row in enumerate(batch["passages"], 1):
-                if row["id"] in analyses:
-                    continue
-                try:
-                    analysis = differentiate_relations(cfg, row["text"], extracted[row["id"]], cache, model, row.get("context"))
-                except (ValueError, RuntimeError) as error:
-                    if not _overflow(error):
-                        raise
-                    children, split = split_passage(cfg, prepared["sources"], row, error, "relations")
-                    splits.append(split)
-                    remaining.extend(children)
-                    continue
-                analyses[row["id"]] = analysis
-                accepted[row["id"]] = row
-                if index % 50 == 0:
-                    print(f"Differentiated {index}/{len(batch['passages'])}", flush=True)
-        remaining = [row for row in remaining if row["id"] not in analyses]
-    source_order = {sid: index for index, sid in enumerate(prepared["sources"])}
-    rows = sorted(accepted.values(), key=lambda row: (source_order[row["source_id"]], row["source_start"], row["source_end"]))
-    maximum = prepared["selection"]["max_passages"]
-    if maximum is not None:
-        rows = rows[:maximum]
-    prepared["passages"] = rows
-    prepared["selection"] = {**prepared["selection"], "passages": len(rows), "capacity_splits": splits}
-    return {row["id"]: analyses[row["id"]] for row in rows}
+def wait_until_complete(af, table, indexes, timeout=READY_TIMEOUT_SECONDS, progress=print):
+    """Poll index readiness; `complete` is Antfly's convergence authority, `failed` is terminal."""
+    started = time.monotonic()
+    while True:
+        statuses = {name: af.index_status(table, name) for name in indexes}
+        failed = {name: s["readiness"].get("pending_reasons") for name, s in statuses.items()
+                  if s["readiness"].get("state") == "failed"}
+        if failed:
+            raise RuntimeError(f"Antfly index failed while converging: {failed}")
+        if all(s["readiness"].get("complete") for s in statuses.values()):
+            return statuses
+        elapsed = time.monotonic() - started
+        if elapsed > timeout:
+            pending = {name: s["readiness"].get("pending_reasons") for name, s in statuses.items()}
+            raise RuntimeError(f"Indexes did not complete within {timeout}s: {pending}")
+        if progress:
+            progress(f"Antfly indexing +{elapsed:.0f}s: " + ", ".join(
+                f"{name} {s['readiness'].get('state')}" + (f" ({s['edge_count']} edges)" if s.get("edge_count") else "")
+                for name, s in statuses.items()), flush=True)
+        time.sleep(5)
 
 
 def build(cfg, max_passages=None):
+    """Write plain passages; Antfly extracts, embeds, resolves entities and links the graph."""
     prepared = prepare(cfg, max_passages)
     binary = binary_info(cfg)
-    cache = Cache(cfg)
-    try:
-        analyses = analyze_passages(cfg, prepared, cache)
-        docs = graph_documents(cfg, prepared, analyses)
-        with provider(cfg) as model:
-            for row in prepared["passages"]:
-                args = [row["text"], "RETRIEVAL_DOCUMENT", cfg["dimensions"]]
-                vector = cache.call("embed", args, lambda row=row: model.embed([row["text"]], "RETRIEVAL_DOCUMENT", cfg["dimensions"]), model)
-                docs[row["id"]]["_embeddings"] = {"vectors": vectors_checked(vector, 1, cfg["dimensions"])[0]}
-        provenance = dict(cache.provenance)
-        calls = {"actual": cache.misses["classify"], "cached": cache.hits["classify"],
-                 "pairs": sum(len(a["decisions"]) for a in analyses.values())}
-    finally:
-        cache.close()
+    docs = passage_documents(prepared)
+    probe = prepared["passages"][0]
     signature = build_signature(cfg)
     content_hash = digest([signature, prepared["corpus_sha256"], prepared["selection"], docs])
-    table = "kg_" + cfg["dataset"].replace("-", "_") + "_" + cfg["track"] + "_" + content_hash[:16]
+    table = "kg_" + cfg["dataset"].replace("-", "_") + "_" + content_hash[:16]
     output = Path(cfg["output"]) / "build.json"
     old = json.loads(output.read_text()) if output.exists() else {}
     af = database(cfg)
+    started = time.monotonic()
     try:
-        if table in af.list_tables():
+        existing = af.list_tables()
+        if table in existing:
             if old.get("content_hash") != content_hash or old.get("url") != str(af.http.base_url):
                 raise ValueError("Existing table has no matching completed build receipt; use a fresh database")
         else:
-            af.create_table(table, table_schema(cfg["dimensions"]))
+            af.create_table(table, passage_table(cfg, table))
             items = list(docs.items())
             for offset in range(0, len(items), 100):
-                af.batch(table, dict(items[offset:offset + 100]))
-        probe = prepared["passages"][0]
-        observed = hits(af.query(table, {"embeddings": {"vectors": docs[probe['id']]["_embeddings"]["vectors"]},
-                      "indexes": ["vectors"], "filter_query": {"term": "passage", "field": "kind"}, "limit": 5}))
+                af.batch(table, dict(items[offset:offset + 100]), sync_level="write")
+            print(f"Wrote {len(items)} passages to {table}", flush=True)
+        statuses = wait_until_complete(af, table, ("vectors", "graph"))
+        observed = hits(af.query(table, search_request(cfg, probe["text"])))
         if probe["id"] not in {h["_id"] for h in observed} or af.get(table, probe["id"]) is None:
-            raise ValueError("Indexed vector round-trip failed; previous receipt is unchanged")
-        manifest = {"pipeline": PIPELINE, "dataset": cfg["dataset"], "track": cfg["track"], "target": settings(cfg)["target"],
-            "binary": binary, "source_commit": settings(cfg).get("source_commit"),
-            "distributable": cfg["track"] == "stable" and all(s["redistribution"] == "allowed" for s in prepared["sources"].values()),
+            raise ValueError("Indexed passage probe failed; previous receipt is unchanged")
+        manifest = {"pipeline": PIPELINE, "dataset": cfg["dataset"], "target": settings(cfg)["target"], "binary": binary,
+            "distributable": all(s["redistribution"] == "allowed" for s in prepared["sources"].values()),
             "config_signature": signature, "corpus_sha256": prepared["corpus_sha256"], "selection": prepared["selection"],
-            "table": table, "build_id": content_hash, "url": str(af.http.base_url), "content_hash": content_hash,
-            "counts": dict(Counter(d["kind"] for d in docs.values())), "relationship_calls": calls,
-            "analysis_counts": {key: sum(len(a[key]) for a in analyses.values()) for key in ("entities", "proposals", "decisions", "assertions")},
-            "models": cfg["models"], "revisions": cfg["revisions"], "model_provenance": provenance,
-            "verification": {"indexed_passage_vector_roundtrip": True}}
+            "table": table, "build_id": content_hash,
+            "url": str(af.http.base_url), "content_hash": content_hash,
+            "counts": {"passages": len(docs), "entities": af.count(table) - len(docs),
+                       "edges": statuses["graph"].get("edge_count")},
+            "seconds": round(time.monotonic() - started, 1),
+            "models": cfg["models"], "revisions": cfg["revisions"],
+            "verification": {"indexes_complete": True, "semantic_probe": True}}
         save(output, manifest)
         return manifest
     finally:
@@ -314,10 +172,10 @@ def build(cfg, max_passages=None):
 def load_build(cfg):
     path = Path(cfg["output"]) / "build.json"
     if not path.exists():
-        raise ValueError(f"No qualified build for {cfg['dataset']}/{cfg['track']}; run python -m kg.dataset {cfg['config_path']} --track {cfg['track']} build")
+        raise ValueError(f"No qualified build for {cfg['dataset']}; run python -m kg.dataset {cfg['config_path']} build")
     manifest = json.loads(path.read_text())
-    if manifest["config_signature"] != build_signature(cfg):
-        raise ValueError("Build settings/code changed; rebuild selected track")
+    if manifest.get("config_signature") != build_signature(cfg):
+        raise ValueError("Build settings/code changed; rebuild this dataset")
     prepared = prepare(cfg, manifest["selection"]["max_passages"])
     if manifest["corpus_sha256"] != prepared["corpus_sha256"]:
         raise ValueError("Corpus changed; rebuild before using evidence offsets")
@@ -338,46 +196,30 @@ def query(cfg, text, mode="graph", models=None):
         raise ValueError("Unknown query mode")
     start = time.perf_counter()
     manifest = load_build(cfg)
-    identity = embedding_identity(manifest["model_provenance"]["embed"])
     owned = models is None
-    model = models if models is not None else create_models(cfg, identity)
-    cache, af = Cache(cfg, identity), database(cfg)
+    model = models if models is not None else create_models(cfg)
+    af = database(cfg)
     timings = {}
-    def timed(name, operation):
-        before = time.perf_counter()
-        hit, miss = sum(cache.hits.values()), sum(cache.misses.values())
-        value = operation()
-        timings[name] = {"ms": round((time.perf_counter() - before) * 1000, 2),
-                         "cache_hits": sum(cache.hits.values()) - hit, "model_calls": sum(cache.misses.values()) - miss}
-        return value
     try:
-        extracted = timed("extraction", lambda: extract_chunk(cfg, text, cache, model))
-        analysis = timed("relations", lambda: differentiate_relations(cfg, text, extracted, cache, model, {"kind": "query"}))
-        vector = None
-        if mode != "text":
-            args = [text, "RETRIEVAL_QUERY", cfg["dimensions"]]
-            vector = timed("embedding", lambda: vectors_checked(cache.call("embed", args,
-                lambda: model.embed([text], "RETRIEVAL_QUERY", cfg["dimensions"]), model), 1, cfg["dimensions"])[0])
-        else:
-            timings["embedding"] = {"ms": 0, "cache_hits": 0, "model_calls": 0}
         before = time.perf_counter()
-        entities = []
+        entities = query_entities(cfg, text, model)
+        timings["extraction"] = {"ms": round((time.perf_counter() - before) * 1000, 2)}
+        before = time.perf_counter()
+        semantic = mode != "text"
+        keys = set()
         if mode == "graph":
-            for span in analysis["entities"]:
-                eid = entity_key(span["label"], span["text"])
-                if span["score"] >= cfg["extraction"]["threshold"] and af.get(manifest["table"], eid) is not None:
-                    entities.append(eid)
-        flat = hits(af.query(manifest["table"], search_request(cfg, text, vector)))
+            keys = {row["_id"] for row in entities_by_surface(af, manifest, [span["text"] for span in entities])}
+        flat = hits(af.query(manifest["table"], search_request(cfg, text, semantic)))
         scoped = []
-        if entities:
-            response = af.query(manifest["table"], {"limit": 0, "graph_queries": {"evidence": {"index": "graph", "traverse": {
-                "start": {"keys": sorted(set(entities))}, "edge_types": ["mentions", "subject", "object", "supported_by"],
-                "direction": "both", "max_depth": 2, "limit": cfg["retrieval"]["graph_candidates"], "include_documents": True}}}})
-            nodes = response["responses"][0]["graph_results"]["evidence"]["nodes"]
+        if keys:
+            # The resolver links each passage to the entities it mentions.
+            nodes = af.traverse(manifest["table"], "graph", keys, edge_types=[MENTIONS], direction="in",
+                                max_depth=1, limit=cfg["retrieval"]["graph_candidates"])
             allowed = {node["key"] for node in nodes if node["key"].startswith("passage:")}
             if allowed:
-                scoped = hits(af.query(manifest["table"], search_request(cfg, text, vector, allowed)))
+                scoped = hits(af.query(manifest["table"], search_request(cfg, text, semantic, allowed)))
         selected, seen = [], set()
+
         def add(ranking, limit):
             for row in ranking:
                 if len(selected) >= limit:
@@ -399,29 +241,9 @@ def query(cfg, text, mode="graph", models=None):
         timings["retrieval"] = {"ms": round((time.perf_counter() - before) * 1000, 2)}
         timings["total_ms"] = round((time.perf_counter() - start) * 1000, 2)
         return {"build_id": manifest["build_id"], "partial": manifest["selection"]["partial"],
-                "query": {"text": text, "analysis": analysis}, "results": selected,
-                "graph": projection(analysis, selected), "timings": timings}
+                "query": {"text": text, "entities": entities}, "results": selected, "timings": timings}
     finally:
-        cache.close()
         af.http.close()
-        if owned:
-            model.close()
-
-
-def decide(cfg, text, instruction=None, labels=None, results=1, models=None):
-    if results not in (1, 2, 3):
-        raise ValueError("results must be 1, 2 or 3")
-    packet = query(cfg, text, models=models)
-    manifest = load_build(cfg)
-    owned = models is None
-    model = models if models is not None else create_models(cfg, embedding_identity(manifest["model_provenance"]["embed"]))
-    cache = Cache(cfg)
-    try:
-        packet["experiments"] = [decide_passage(cfg, text, packet["query"]["analysis"], row, cache, model,
-                                 instruction=instruction, labels=labels) for row in packet["results"][:results]]
-        return packet
-    finally:
-        cache.close()
         if owned:
             model.close()
 
@@ -429,25 +251,19 @@ def decide(cfg, text, instruction=None, labels=None, results=1, models=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
-    parser.add_argument("--track", choices=("stable", "latest"), default="stable")
     sub = parser.add_subparsers(dest="command", required=True)
     collector = sub.add_parser("collect")
     collector.add_argument("--refresh", action="store_true")
-    for name in ("validate", "prepare", "doctor", "db"):
+    for name in ("validate", "prepare", "doctor", "inference", "db"):
         sub.add_parser(name)
     builder = sub.add_parser("build")
     builder.add_argument("--max-passages", type=int)
     search = sub.add_parser("query")
     search.add_argument("text")
     search.add_argument("--mode", choices=("text", "hybrid", "graph"), default="graph")
-    experiment = sub.add_parser("decide")
-    experiment.add_argument("text")
-    experiment.add_argument("--instruction")
-    experiment.add_argument("--labels", type=json.loads)
-    experiment.add_argument("--results", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     try:
-        cfg = load_dataset(args.config, args.track).data
+        cfg = load_dataset(args.config).data
         if args.command == "collect":
             from kg.collect import collect
             result = collect(cfg, refresh=args.refresh)
@@ -456,26 +272,29 @@ def main():
             result = {"valid": True, "sources": len(prepared["sources"]), "passages": len(prepared["passages"]),
                       "corpus_sha256": prepared["corpus_sha256"], "selection": prepared["selection"]}
         elif args.command == "doctor":
-            result = {"track": args.track, "binary": binary_info(cfg), "models": cfg["models"],
-                      "revisions": cfg["revisions"], "provider": settings(cfg)["provider"],
+            result = {"binary": binary_info(cfg), "models": cfg["models"], "revisions": cfg["revisions"],
                       "qualification": "Binary receipt is not model/runtime qualification"}
+        elif args.command == "inference":
+            info = binary_info(cfg)
+            host, port = settings(cfg)["inference_url"].removeprefix("http://").rsplit(":", 1)
+            print(json.dumps(info), flush=True)
+            raise SystemExit(subprocess.call([info["path"], "inference", "run", "--host", host, "--port", port]))
         elif args.command == "db":
             info = binary_info(cfg)
-            path = Path(settings(cfg)["database"])
-            path.parent.mkdir(parents=True, exist_ok=True)
+            data_dir = Path(settings(cfg)["data_dir"])
+            data_dir.mkdir(parents=True, exist_ok=True)
             print(json.dumps(info), flush=True)
-            raise SystemExit(subprocess.call([info["path"], "lite", "serve", str(path), "--addr", settings(cfg)["addr"],
-                                               "--health-port", str(settings(cfg)["health_port"])]))
+            host, port = settings(cfg)["addr"].rsplit(":", 1)
+            # The default storage engine: artifact-backed graph and embedding workers
+            # fail permanently under bulk load on rc.1's Lite engine.
+            raise SystemExit(subprocess.call([info["path"], "standalone", "--data-dir", str(data_dir), "--host", host,
+                                              "--port", port, "--health-port", str(settings(cfg)["health_port"])]))
         elif args.command == "build":
             result = build(cfg, args.max_passages)
-        elif args.command == "query":
-            result = query(cfg, args.text, args.mode)
         else:
-            result = decide(cfg, args.text, args.instruction, args.labels, args.results)
+            result = query(cfg, args.text, args.mode)
         print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
     except (ValueError, KeyError, FileNotFoundError, RuntimeError, ImportError, httpx.HTTPError) as error:
-        if hasattr(error, "payload"):
-            print(json.dumps(error.payload, indent=2, ensure_ascii=False))
         parser.exit(1, f"dataset: {error}\n")
     except KeyboardInterrupt:
         parser.exit(130)

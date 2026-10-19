@@ -1,4 +1,4 @@
-"""Thin HTTP client for an Antfly Lite server (`antfly lite serve`).
+"""Thin HTTP client for an Antfly v0.3 server (`antfly standalone`).
 
 Deliberately raw JSON so the request shapes are visible. The official
 `antfly-sdk` can replace this later.
@@ -35,6 +35,14 @@ class Antfly:
     def create_table(self, table: str, spec: dict) -> dict:
         return self._call("POST", f"/db/v1/tables/{table}", json=spec)
 
+    def index_status(self, table: str, index: str) -> dict:
+        """The index's runtime status; `readiness.complete` means every source has converged."""
+        return self._call("GET", f"/db/v1/tables/{table}/indexes/{index}")["status"]
+
+    def count(self, table: str) -> int:
+        total = self.query(table, {"limit": 0})["responses"][0]["hits"]["total"]
+        return total["value"] if isinstance(total, dict) else total
+
     # --- documents ----------------------------------------------------------
 
     def batch(self, table: str, inserts: dict[str, dict], sync_level: str = "full_index") -> dict:
@@ -54,6 +62,18 @@ class Antfly:
 
     def query(self, table: str, body: dict) -> dict:
         return self._call("POST", f"/db/v1/tables/{table}/query", json=body)
+
+    def traverse(self, table: str, index: str, keys: list[str], **options) -> list[dict]:
+        """Every path from documents in `table`, one result per reaching path.
+
+        Parallel facts to the same neighbor stay separate; callers that want
+        distinct nodes collect keys. Always undeduplicated: on rc.1, a deduplicated
+        traversal from a resolver-promoted entity in the same table returns nothing.
+        """
+        body = {"limit": 0, "graph_queries": {"t": {"index": index, "traverse": {
+            "start": {"keys": sorted(set(keys))}, **options, "include_paths": True, "deduplicate_nodes": False}}}}
+        nodes = self.query(table, body)["responses"][0]["graph_results"]["t"]["nodes"]
+        return [node for node in nodes if node.get("path_edges")]  # drop the start nodes themselves
 
     # --- inference ----------------------------------------------------------
 

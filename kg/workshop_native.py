@@ -1,21 +1,17 @@
-"""HTTP provider for the unreleased Antfly native inference runtime.
+"""Client for Antfly's native inference API, used for on-demand calls from the page.
 
-Requires httpx, not torch or the Python GLiNER runtime. Serve the pinned original
-checkpoints with current Antfly main; Antfly 0.2.5 does not implement this API
-contract. Revision declarations are provenance, not remote attestation: extraction
-responses expose a model name but no artifact digest. EmbeddingGemma 2 does expose
-an exact model_identity, which is retained and pinned on subsequent requests.
-
-Native extraction uses UTF-8 byte offsets (the qualified GLiNER2.5 profile); this
-adapter converts them to half-open Python Unicode codepoint offsets. Native
-512-token Decide and 8192-token embedding limits include schema/task prefixes.
-The server's exact tokenizer rejects overflow; this adapter never truncates.
+Antfly itself runs extraction and embedding at ingest; this client only extracts
+entities from a question and runs GLiNER2.5-Decide on one relationship at a time.
+Native extraction uses UTF-8 byte offsets; this adapter converts them to half-open
+Python character offsets. Decide's 512-token limit includes the label schema; the
+server rejects overflow and this adapter never truncates.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import time
 from copy import deepcopy
 from typing import Any
 
@@ -32,6 +28,9 @@ DEFAULT_MODELS = {
     "embed": "google/embeddinggemma-2",
     "decide": "fastino/GLiNER2.5-Decide",
 }
+
+
+BUSY_RETRIES = 20
 
 
 class NativeInferenceError(RuntimeError):
@@ -73,16 +72,14 @@ class NativeModels:
     """Shared workshop contract backed exclusively by real /ai/v1 HTTP calls.
 
     Options: base_url (origin or /ai/v1 URL), timeout (seconds), revisions
-    (per-role declarations), model_identity (optional exact embedding pin), and
-    headers. Models load lazily on the server; configure max_loaded_models=1 on
-    an 8 GiB host. close() releases the HTTP client, not a shared server's models.
+    (per-role declarations) and headers. close() releases the HTTP client,
+    not the server's models.
     """
 
     def __init__(self, models: dict, **options: Any) -> None:
         base_url = options.pop("base_url", "http://127.0.0.1:8090/ai/v1").rstrip("/")
         timeout = options.pop("timeout", 300.0)
         revisions = options.pop("revisions", None)
-        identity = options.pop("model_identity", None)
         headers = options.pop("headers", None)
         if options:
             raise TypeError(f"Unknown NativeModels options: {', '.join(sorted(options))}")
@@ -96,14 +93,8 @@ class NativeModels:
         declared = {role: revision for role, revision in DEFAULT_REVISIONS.items()
                     if self.models[role] == DEFAULT_MODELS[role]}
         self.revisions = {**declared, **(revisions or {})}
-        if identity is not None and (
-            not isinstance(identity, str) or len(identity) != 64
-            or any(c not in "0123456789abcdef" for c in identity)
-        ):
-            raise ValueError("model_identity must be a lowercase SHA256 hex digest")
-        self._identity = identity
         self._metadata: dict[str, Any] = {
-            "provider": "antfly_native", "release": "unreleased",
+            "provider": "antfly_native",
             "base_url": base_url, "configured_models": dict(self.models),
             "configured_revisions": dict(self.revisions),
             "revision_verification": "server deployment responsibility; not attested by extraction API",
@@ -121,8 +112,19 @@ class NativeModels:
         body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if endpoint == "extract" and len(body) > 16 * 1024 * 1024:
             raise ValueError("Native extraction exceeds the 16 MiB request limit")
-        response = self._client.post(endpoint, content=body,
-                                     headers={"Content-Type": "application/json"})
+        for attempt in range(BUSY_RETRIES + 1):
+            response = self._client.post(endpoint, content=body,
+                                         headers={"Content-Type": "application/json"})
+            # The server admits a bounded number of requests; wait when it says so.
+            if response.status_code != 503 or attempt == BUSY_RETRIES:
+                break
+            try:
+                busy = response.json()
+            except ValueError:
+                break
+            if not busy.get("retryable"):
+                break
+            time.sleep(min(busy.get("retry_after_ms", 500), 2000) / 1000)
         try:
             result = response.json()
         except ValueError as exc:
@@ -139,7 +141,7 @@ class NativeModels:
             raise NativeInferenceError(f"Invalid native {endpoint} response", details=result)
         self._metadata["observed"][role] = {
             key: deepcopy(result[key]) for key in
-            ("model", "model_identity", "schema_version", "usage") if key in result
+            ("model", "schema_version", "usage") if key in result
         }
         return result
 
@@ -232,48 +234,6 @@ class NativeModels:
                               "score": _probability(relation.get("score"))})
         self._metadata["observed"]["extract"]["rejected_unanchored_relations"] = rejected
         return {"entities": entities, "relations": relations}
-
-    def embed(self, texts: list[str], task_type: str, dimensions: int) -> list[list[float]]:
-        if task_type not in {"RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY"}:
-            raise ValueError("Workshop embeddings require a retrieval document/query role")
-        if type(dimensions) is not int or dimensions not in {768, 512, 256, 128}:
-            raise ValueError("EmbeddingGemma 2 dimensions must be 768, 512, 256 or 128")
-        if not isinstance(texts, list) or any(not isinstance(text, str) or not text for text in texts):
-            raise ValueError("Embedding inputs must be nonempty strings")
-        if not texts:
-            return []
-        payload = {"model": self.models["embed"], "input": texts,
-                   "task_type": task_type, "dimensions": dimensions,
-                   "encoding_format": "float", "error_policy": "fail_fast"}
-        if self._identity is not None:
-            payload["model_identity"] = self._identity
-        result = self._post("embed", payload, "embed")
-        identity = result.get("model_identity")
-        if (not isinstance(identity, str) or len(identity) != 64
-                or any(c not in "0123456789abcdef" for c in identity)):
-            raise NativeInferenceError("EmbeddingGemma 2 response lacks its exact model_identity")
-        if self._identity is not None and identity != self._identity:
-            raise NativeInferenceError("Embedding model identity changed within the workshop run")
-        rows = result.get("data")
-        if not isinstance(rows, list) or len(rows) != len(texts):
-            raise NativeInferenceError("Native embedding response has an incorrect result count")
-        vectors: list[list[float] | None] = [None] * len(texts)
-        for row in rows:
-            if not isinstance(row, dict):
-                raise NativeInferenceError("Native embedding row must be an object")
-            index, vector = row.get("index"), row.get("embedding")
-            if (type(index) is not int or not 0 <= index < len(texts) or vectors[index] is not None
-                    or not isinstance(vector, list) or len(vector) != dimensions
-                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
-                           or not math.isfinite(v) for v in vector)):
-                raise NativeInferenceError("Native embedding row has invalid index, dimensions or values")
-            norm = math.sqrt(sum(v * v for v in vector))
-            if not math.isclose(norm, 1.0, rel_tol=1e-4, abs_tol=1e-4):
-                raise NativeInferenceError("Native EmbeddingGemma 2 returned an unnormalized vector")
-            vectors[index] = [float(value) for value in vector]
-        self._identity = identity
-        self._metadata["observed"]["embed"].update({"task_type": task_type, "dimensions": dimensions})
-        return vectors
 
     def classify(self, text: str, labels: dict[str, str], instruction: str) -> dict:
         self._text(text)

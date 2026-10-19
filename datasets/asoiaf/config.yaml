@@ -17,24 +17,13 @@ retrieval:
   graph_candidates: 100
   evidence: 5
   text_reserve: 1
-tracks:
-  stable:
-    target: v0.2.5
-    provider: python
-    addr: 127.0.0.1:8795
-    health_port: 4295
-    binary_env: ANTFLY_STABLE_BIN
-    database: ../../data/antfly/stable/graph.aflite
-  latest:
-    target: v0.3.0/main
-    provider: antfly
-    addr: 127.0.0.1:8796
-    health_port: 4296
-    binary_env: ANTFLY_LATEST_BIN
-    database: ../../data/antfly/latest/graph.aflite
-    source_commit: c102cbeac5ae8911ffe6a13105731f381285bfc2
-    distributable: false
-    inference_url: http://127.0.0.1:8090
+antfly:
+  target: v0.3.0-rc.1
+  addr: 127.0.0.1:8796
+  health_port: 4296
+  binary_env: ANTFLY_BIN
+  data_dir: ../../data/antfly
+  inference_url: http://127.0.0.1:8090
 dataset: asoiaf
 title: A Song of Ice and Fire / Game of Thrones
 corpus: metadata.jsonl
@@ -48,7 +37,32 @@ extraction:
   threshold: 0.5
   relations:
     parent_of:
-      description: HEAD character is a parent of TAIL character.
+      description: The passage states HEAD character is the mother or father of TAIL character.
+      head_types:
+      - character
+      tail_types:
+      - character
+    sibling_of:
+      description: The passage states HEAD character is a brother, sister or twin of TAIL character.
+      head_types:
+      - character
+      tail_types:
+      - character
+    married_to:
+      description: The passage states HEAD character is or was married to TAIL character.
+      head_types:
+      - character
+      tail_types:
+      - character
+    serves:
+      description: HEAD character serves, works for or is sworn to TAIL character or house.
+      head_types:
+      - character
+      tail_types:
+      - character
+      - house
+    associated_with:
+      description: HEAD and TAIL characters interact or are connected, but no more specific relationship above is stated.
       head_types:
       - character
       tail_types:
@@ -81,14 +95,6 @@ relation_decision:
     the passage. Respect direction, negation, uncertainty and mixed book/television
     continuity. Do not use outside knowledge. Source context is provenance, not additional
     facts.
-query_decision:
-  instruction: Judge whether the passage addresses the query in the same book/television
-    continuity. Use only the supplied text and model-predicted graphs.
-  labels:
-    relevant: Explicitly addresses the named relationship in matching continuity.
-    not_relevant: Addresses a different relationship or continuity.
-    unclear: Evidence or continuity is insufficient or ambiguous.
-  results: 1
 collection:
   kind: wikipedia
   user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)

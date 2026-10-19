@@ -1,10 +1,8 @@
 """Deterministic evidence, model-boundary and publication regressions; no model downloads."""
-from contextlib import closing
 from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,27 +11,24 @@ import httpx
 
 from kg.antfly import Antfly
 from kg import dataset
-from kg.dataset_decisions import analyze_chunk, differentiate_relations, extract_chunk
+from kg.dataset_decisions import RESERVED_LABELS, decide_relationship, relationship_labels
 from kg.dataset_inputs import prepare_inputs, read_manifest, transcript_turns, windows
-from kg.evidence_graph import graph_documents
-from kg.search import interpret_intent, match_candidates, _relationships, _specific_parent
+from kg.evidence_graph import character_span
+from kg.search import interpret_intent, match_candidates, _relationships
 from kg.workshop_native import DEFAULT_MODELS, DEFAULT_REVISIONS, NativeInferenceError, NativeModels
-from kg.workshop_python import _normalize_extraction
 
 
-def config(root, track="stable"):
+def config(root):
     """Resolved runtime fixture, independent of collected corpora and local services."""
     root = Path(root)
     return {
-        "version": 2, "dataset": "fixture", "title": "Boundary fixture", "track": track,
+        "version": 2, "dataset": "fixture", "title": "Boundary fixture",
         "config_path": str(root / "config.yaml"), "corpus": str(root / "metadata.jsonl"),
         "output": str(root / "generated"), "dimensions": 768,
         "models": dict(DEFAULT_MODELS), "revisions": dict(DEFAULT_REVISIONS),
-        "tracks": {
-            "stable": {"provider": "python", "target": "v0.2.5", "addr": "127.0.0.1:8795"},
-            "latest": {"provider": "native", "target": "main", "addr": "127.0.0.1:8796",
-                       "inference_url": "http://fixture"},
-        },
+        "antfly": {"target": "v0.3.0-rc.1", "addr": "127.0.0.1:8796", "health_port": 4296,
+                   "binary_env": "ANTFLY_BIN", "data_dir": str(root / "antfly"),
+                   "inference_url": "http://fixture"},
         "passages": {"max_bytes": 80, "max_words": 8, "overlap_words": 2},
         "extraction": {
             "entities": ["character", "house", "city"], "threshold": .5,
@@ -74,187 +69,57 @@ def mention(text, surface, label="character", start=None, score=.9):
     return {"text": surface, "start": start, "end": start + len(surface), "label": label, "score": score}
 
 
-def proposal(head, tail, label="parent_of", score=.8):
-    return {"head": {k: head[k] for k in ("text", "start", "end")},
-            "tail": {k: tail[k] for k in ("text", "start", "end")}, "label": label, "score": score}
-
-
-class BoundaryModels:
-    """Only inference is stubbed; cache, analysis and graph construction are real."""
-    def __init__(self, extracted=None, winner="knows"):
-        self.extracted = extracted if extracted is not None else {"entities": [], "relations": []}
-        self.winner = winner
-        self.metadata = {"provider": "isolated_boundary_fixture"}
-        self.extractions = 0
-        self.classifications = []
-
-    def extract(self, text, schema, threshold):
-        self.extractions += 1
-        return deepcopy(self.extracted)
+class DecideModels:
+    """Only inference is stubbed."""
+    def __init__(self, winner="knows"):
+        self.winner, self.calls = winner, []
 
     def classify(self, text, labels, instruction):
-        self.classifications.append((text, deepcopy(labels), instruction))
-        if self.winner not in labels:
-            raise AssertionError("Fixture winner is not a candidate")
-        remainder = .1 / (len(labels) - 1)
-        return {"label": self.winner,
-                "scores": {label: .9 if label == self.winner else remainder for label in labels}}
-
-    def embed(self, texts, task_type, dimensions):
-        return [[1.] + [0.] * (dimensions - 1) for _ in texts]
-
-    def close(self):
-        pass
+        self.calls.append((text, deepcopy(labels), instruction))
+        rest = .1 / (len(labels) - 1)
+        return {"label": self.winner, "scores": {label: .9 if label == self.winner else rest for label in labels}}
 
 
-class RelationshipBoundaries(unittest.TestCase):
+class DecideBoundaries(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.cfg = config(self.directory.name)
-        self.cache = dataset.Cache(self.cfg)
-        self.addCleanup(self.cache.close)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.cfg = config(directory.name)
         self.text = "Ned saw Árya. Ned left."
-        self.head = mention(self.text, "Ned")
-        self.tail = mention(self.text, "Árya")
-        self.extracted = {"entities": [self.head, self.tail], "relations": [proposal(self.head, self.tail)]}
+        self.passage = {"text": self.text}
 
-    def analyze(self, extracted=None, winner="knows", context=None):
-        models = BoundaryModels(self.extracted if extracted is None else extracted, winner)
-        result = analyze_chunk(self.cfg, self.text, self.cache, models, context=context)
-        return result, models
+    def test_candidates_are_the_type_compatible_predicates_plus_reserved_outcomes(self):
+        self.assertEqual(set(relationship_labels(self.cfg, "character", "character")),
+                         {"parent_of", "knows", *RESERVED_LABELS})
+        self.assertEqual(set(relationship_labels(self.cfg, "character", "house")), {"member_of", *RESERVED_LABELS})
+        self.assertEqual(set(relationship_labels(self.cfg, "city", "house")), set(RESERVED_LABELS))
 
-    def test_decide_can_change_predicate_without_losing_base_proposals(self):
-        original = deepcopy(self.extracted)
-        original["relations"].append(proposal(self.head, self.tail, "knows", .6))
-        analysis, models = self.analyze(original)
-        self.assertEqual(analysis["proposals"], original["relations"])
-        self.assertEqual(analysis["entities"], original["entities"])
-        self.assertEqual(len(models.classifications), 1)
-        decision = analysis["decisions"][0]
-        self.assertEqual(decision["proposal_indices"], [0, 1])
-        self.assertEqual(set(decision["labels"]), {"parent_of", "knows", "no_relation", "unclear"})
-        self.assertEqual(set(decision["scores"]), set(decision["labels"]))
-        assertion, = analysis["assertions"]
-        self.assertEqual((assertion["head"], assertion["predicate"], assertion["tail"]),
-                         (self.head, "knows", self.tail))
-        self.assertEqual(assertion["status"], "model_classified_not_verified")
-        self.assertEqual(assertion["decision_index"], 0)
-        self.assertEqual(original["relations"][0]["label"], "parent_of")
+    def test_decide_reports_every_score_and_the_exact_input(self):
+        models = DecideModels("knows")
+        result = decide_relationship(self.cfg, self.passage, mention(self.text, "Ned"), mention(self.text, "Árya"), models)
+        self.assertEqual(result["label"], "knows")
+        self.assertEqual(set(result["scores"]), {"parent_of", "knows", *RESERVED_LABELS})
+        self.assertIn("HEAD: Ned [character]", result["input"])
+        self.assertEqual(models.calls[0][2], self.cfg["relation_decision"]["instruction"])
 
-    def test_ordered_occurrences_are_distinct_and_sorted_without_all_pairs_expansion(self):
-        later = mention(self.text, "Ned", start=self.text.rindex("Ned"))
-        extracted = {"entities": [self.head, self.tail, later], "relations": [
-            proposal(later, self.tail), proposal(self.tail, self.head), proposal(self.head, self.tail)]}
-        analysis, models = self.analyze(extracted)
-        self.assertEqual(len(models.classifications), 3)
-        self.assertEqual([(d["head"]["start"], d["tail"]["start"]) for d in analysis["decisions"]],
-                         [(self.head["start"], self.tail["start"]),
-                          (self.tail["start"], self.head["start"]), (later["start"], self.tail["start"])])
-        self.assertEqual([(a["head"]["start"], a["tail"]["start"]) for a in analysis["assertions"]],
-                         [(d["head"]["start"], d["tail"]["start"]) for d in analysis["decisions"]])
-
-    def test_no_relation_creates_no_semantic_edge_but_preserves_review(self):
-        analysis, _ = self.analyze(winner="no_relation")
-        self.assertEqual(analysis["assertions"], [])
-        self.assertEqual(analysis["proposals"], self.extracted["relations"])
-        self.assertEqual(analysis["decisions"][0]["label"], "no_relation")
-        docs = graph_documents(self.cfg, self.prepared(), {"passage:one": analysis})
-        self.assertEqual([row for row in docs.values() if row["kind"] == "assertion"], [])
-        self.assertEqual(docs["passage:one"]["analysis"]["decisions"], analysis["decisions"])
-
-    def test_unclear_is_retained_as_unresolved_not_a_semantic_assertion(self):
-        analysis, _ = self.analyze(winner="unclear")
-        decision, = analysis["decisions"]
-        self.assertEqual(analysis["assertions"], [])
-        self.assertEqual(decision["label"], "unclear")
-        self.assertTrue(decision["unresolved_reason"])
-        self.assertIn("unclear", decision["scores"])
-        self.assertIsNotNone(decision["input"])
-
-    def test_untyped_ambiguous_and_below_threshold_endpoints_are_not_invented(self):
-        variants = {
-            "untyped": [self.head],
-            "ambiguous": [self.head, self.tail, {**self.tail, "label": "house"}],
-            "below_threshold": [self.head, {**self.tail, "score": .49}],
-            "incompatible_types": [{**self.head, "label": "house"}, self.tail],
-        }
-        for name, entities in variants.items():
-            with self.subTest(name=name):
-                extracted = {"entities": entities, "relations": deepcopy(self.extracted["relations"])}
-                models = BoundaryModels(extracted)
-                analysis = differentiate_relations(self.cfg, self.text, extracted, self.cache, models)
-                self.assertEqual(models.classifications, [])
-                self.assertEqual(analysis["assertions"], [])
-                self.assertEqual(analysis["proposals"], extracted["relations"])
-                self.assertEqual(analysis["entities"], entities)
-                self.assertTrue(analysis["decisions"][0]["unresolved_reason"])
-
-    def test_entities_without_base_proposals_make_zero_relationship_calls(self):
-        analysis, models = self.analyze({"entities": [self.head, self.tail], "relations": []})
-        self.assertEqual(models.classifications, [])
-        self.assertEqual(analysis["decisions"], [])
-        self.assertEqual(analysis["assertions"], [])
-        self.assertEqual(self.cache.misses["classify"], 0)
-        docs = graph_documents(self.cfg, self.prepared(), {"passage:one": analysis})
-        self.assertEqual([d for d in docs.values() if d["kind"] == "assertion"], [])
-
-    def test_wrong_character_offsets_fail_instead_of_reanchoring_repeated_name(self):
-        malformed = deepcopy(self.extracted)
-        malformed["entities"][0]["start"] = 1
+    def test_decide_rejects_a_span_that_is_not_in_the_passage(self):
+        bad = {**mention(self.text, "Ned"), "start": 1}
         with self.assertRaises(ValueError):
-            extract_chunk(self.cfg, self.text, self.cache, BoundaryModels(malformed))
+            decide_relationship(self.cfg, self.passage, bad, mention(self.text, "Árya"), DecideModels())
 
-    def test_context_is_part_of_classification_cache_but_not_extraction_cache(self):
-        models = BoundaryModels(self.extracted)
-        contexts = [{"kind": "mission_transcript", "met": "055:50:05", "speaker": "CC"},
-                    {"kind": "mission_transcript", "met": "055:50:06", "speaker": "CC"},
-                    {"kind": "mission_transcript", "met": "055:50:05", "speaker": "CDR"},
-                    {"kind": "review_board", "printed_label": "5-12"}]
-        for context in contexts:
-            first = analyze_chunk(self.cfg, self.text, self.cache, models, context=context)
-            again = analyze_chunk(self.cfg, self.text, self.cache, models, context=context)
-            self.assertEqual(first, again)
-            self.assertEqual(first["context"], context)
-        self.assertEqual(models.extractions, 1)
-        self.assertEqual(len(models.classifications), len(contexts))
-        self.assertEqual(self.cache.misses["classify"], len(contexts))
-        self.assertEqual(self.cache.hits["classify"], len(contexts))
 
-    def test_changed_candidate_meaning_or_instruction_invalidates_decision_cache(self):
-        models = BoundaryModels(self.extracted)
-        analyze_chunk(self.cfg, self.text, self.cache, models)
-        analyze_chunk(self.cfg, self.text, self.cache, models)
-        self.cfg["extraction"]["relations"]["knows"]["description"] = "HEAD explicitly recognizes TAIL."
-        analyze_chunk(self.cfg, self.text, self.cache, models)
-        self.cfg["relation_decision"]["instruction"] = "Classify only direct statements, not hypotheses."
-        analyze_chunk(self.cfg, self.text, self.cache, models)
-        self.assertEqual(models.extractions, 1)
-        self.assertEqual(len(models.classifications), 3)
+class ExtractorSpans(unittest.TestCase):
+    def test_utf8_byte_offsets_become_character_offsets(self):
+        text = "😀 Árya saw Ned."
+        start = len(text[:text.index("Ned")].encode("utf-8"))
+        self.assertEqual(character_span(text, {"text": "Ned", "start": start, "end": start + 3}),
+                         {"text": "Ned", "start": text.index("Ned"), "end": text.index("Ned") + 3})
 
-    def prepared(self):
-        return {"sources": {"s1": {"id": "s1", "title": "Metadata alone is not an entity"}},
-                "passages": [{"id": "passage:one", "source_id": "s1", "source_start": 100,
-                              "source_end": 100 + len(self.text), "text": self.text}]}
-
-    def test_graph_keeps_direction_distinct_mentions_and_absolute_unicode_offsets(self):
-        analysis, _ = self.analyze()
-        prepared = self.prepared()
-        prepared["passages"].append({**prepared["passages"][0], "id": "passage:two", "source_start": 500,
-                                     "source_end": 500 + len(self.text)})
-        docs = graph_documents(self.cfg, prepared, {p["id"]: deepcopy(analysis) for p in prepared["passages"]})
-        assertions = [d for d in docs.values() if d["kind"] == "assertion"]
-        self.assertEqual({d["source_start"] for d in assertions}, {100, 500})
-        for row in assertions:
-            self.assertEqual(docs[row["subject_id"]]["text"], "Ned")
-            self.assertEqual(docs[row["object_id"]]["text"], "Árya")
-            self.assertEqual(row["predicate"], "knows")
-            passage = docs[row["_edges"]["graph"]["supported_by"][0]["target"]]
-            self.assertEqual(row["source_end"], passage["source_end"])
-        mentions = [d for d in docs.values() if d["kind"] == "mention" and d["text"] == "Árya"]
-        self.assertEqual({(d["source_start"], d["source_end"]) for d in mentions},
-                         {(base + self.tail["start"], base + self.tail["end"]) for base in (100, 500)})
-        self.assertEqual(len({d["_edges"]["graph"]["refers_to"][0]["target"] for d in mentions}), 1)
+    def test_misaligned_spans_are_rejected_not_guessed(self):
+        text = "😀 Árya saw Ned."
+        for start, end in ((1, 4), (0, 99), (5, 9)):
+            with self.subTest(start=start), self.assertRaises(ValueError):
+                character_span(text, {"text": "Árya", "start": start, "end": end})
 
 
 class InputIntegrity(unittest.TestCase):
@@ -291,64 +156,6 @@ class InputIntegrity(unittest.TestCase):
             self.assertTrue(turn["text"].startswith(turn["speaker"]))
             self.assertNotIn("02 07 50", turn["text"])
         self.assertEqual(turns[0]["speaker_role"], "CC")
-
-    def test_capacity_refinement_preserves_every_source_word_and_unique_offsets(self):
-        class LimitedModels(BoundaryModels):
-            def extract(self, text, schema, threshold):
-                if len(text.split()) > 3:
-                    raise ValueError("schema, instruction and text require 555 tokens; limit is 512")
-                return super().extract(text, schema, threshold)
-        prepared = prepare_inputs(self.cfg)
-        before = self.path.read_bytes()
-        with closing(dataset.Cache(self.cfg)) as cache:
-            extracted = dataset.extract_passages(self.cfg, prepared, cache, LimitedModels())
-        self.assertEqual(len(extracted), len(prepared["passages"]))
-        self.assertTrue(prepared["selection"]["capacity_splits"])
-        for passage in prepared["passages"]:
-            self.assertEqual(passage["text"], self.text[passage["source_start"]:passage["source_end"]])
-            self.assertLessEqual(len(passage["text"].split()), 3)
-        for position, char in enumerate(self.text):
-            if not char.isspace():
-                self.assertTrue(any(p["source_start"] <= position < p["source_end"] for p in prepared["passages"]), position)
-        self.assertEqual(self.path.read_bytes(), before)
-
-    def test_relation_capacity_refines_whole_windows_without_losing_source_coverage(self):
-        class LimitedModels(BoundaryModels):
-            def extract(self, text, schema, threshold):
-                words = text.split()
-                head = mention(text, words[0])
-                tail = mention(text, words[-1], start=text.rindex(words[-1]))
-                return {"entities": [head, tail], "relations": [proposal(head, tail)]}
-
-            def classify(self, text, labels, instruction):
-                chunk = text.split("Text:\n", 1)[1].split("\n\nHEAD:", 1)[0]
-                if len(chunk.split()) > 3:
-                    raise ValueError("schema, instruction and text require 533 tokens; limit is 512")
-                self.winner = "no_relation"
-                return super().classify(text, labels, instruction)
-        prepared = prepare_inputs(self.cfg)
-        with closing(dataset.Cache(self.cfg)) as cache:
-            with patch("kg.dataset.create_models", side_effect=lambda *args, **kwargs: LimitedModels()):
-                analyses = dataset.analyze_passages(self.cfg, prepared, cache)
-        self.assertEqual(set(analyses), {row["id"] for row in prepared["passages"]})
-        self.assertTrue(any(split["stage"] == "relations" for split in prepared["selection"]["capacity_splits"]))
-        for row in prepared["passages"]:
-            self.assertEqual(row["text"], self.text[row["source_start"]:row["source_end"]])
-            self.assertLessEqual(len(row["text"].split()), 3)
-            self.assertEqual(analyses[row["id"]]["assertions"], [])
-        for position, char in enumerate(self.text):
-            if not char.isspace():
-                self.assertTrue(any(row["source_start"] <= position < row["source_end"] for row in prepared["passages"]), position)
-
-    def test_capacity_refinement_does_not_split_an_indivisible_source_word(self):
-        class LimitedModels(BoundaryModels):
-            def extract(self, text, schema, threshold):
-                raise ValueError("schema, instruction and text require 555 tokens; limit is 512")
-        source_fixture(self.cfg, "indivisible")
-        prepared = prepare_inputs(self.cfg)
-        with closing(dataset.Cache(self.cfg)) as cache:
-            with self.assertRaises(ValueError):
-                dataset.extract_passages(self.cfg, prepared, cache, LimitedModels())
 
     def test_changed_raw_is_rejected_without_mutating_raw_or_metadata(self):
         changed = self.path.read_bytes() + b" Changed."
@@ -422,34 +229,8 @@ class NativeBoundaries(unittest.TestCase):
                 with self.assertRaises(NativeInferenceError):
                     self.native(response).extract(text, {"entities": ["character"], "relations": []}, .5)
 
-    def test_python_adapter_does_not_guess_repeated_relation_occurrences(self):
-        text = "Arya saw Ned. Arya left."
-        raw = {"entities": {}, "relation_extraction": {"parent_of": [{
-            "head": {"text": "Ned", "confidence": .9}, "tail": {"text": "Arya", "confidence": .9}}]}}
-        normalized = _normalize_extraction(text, raw, {"entities": ["character"], "relations": ["parent_of"]})
-        self.assertEqual(normalized["relations"], [])
-
-    def test_native_embedding_cannot_change_the_indexed_artifact_identity(self):
-        response = {"model_identity": "b" * 64,
-                    "data": [{"index": 0, "embedding": [1.] + [0.] * 127}]}
-        models = self.native(response, model_identity="a" * 64)
-        with self.assertRaises(NativeInferenceError):
-            models.embed(["query"], "RETRIEVAL_QUERY", 128)
-
-    def test_cached_embedding_from_another_artifact_is_rejected_without_inference(self):
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = config(directory, track="latest")
-            models = SimpleNamespace(metadata={"observed": {"embed": {"model_identity": "a" * 64}}})
-            args = ["query", "RETRIEVAL_QUERY", 128]
-            with closing(dataset.Cache(cfg)) as cache:
-                cache.call("embed", args, lambda: [[1.] + [0.] * 127], models)
-            with closing(dataset.Cache(cfg, expected_identity="b" * 64)) as cache:
-                with self.assertRaises(ValueError):
-                    cache.call("embed", args, lambda: self.fail("A cache hit must not invoke a different model"), models)
-
-
 class BuildPublication(unittest.TestCase):
-    def test_failed_indexed_vector_roundtrip_preserves_previous_usable_receipt(self):
+    def test_failed_indexed_passage_probe_preserves_previous_usable_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg = config(directory)
             source_fixture(cfg)
@@ -459,13 +240,15 @@ class BuildPublication(unittest.TestCase):
             path = Path(cfg["output"]) / "build.json"
             dataset.save(path, previous)
             before = path.read_bytes()
-            failed_probe = []
+            probes = []
 
             def handler(request):
                 if request.method == "GET" and request.url.path == "/db/v1/tables":
                     return httpx.Response(200, json=[])
+                if request.method == "GET" and "/indexes/" in request.url.path:
+                    return httpx.Response(200, json={"status": {"readiness": {"state": "ready", "complete": True}}})
                 if request.method == "POST" and request.url.path.endswith("/query"):
-                    failed_probe.append(request.url.path)
+                    probes.append(request.url.path)
                     return httpx.Response(200, json={"hits": {"hits": []}})
                 if request.method == "POST":
                     return httpx.Response(200, json={})
@@ -475,12 +258,11 @@ class BuildPublication(unittest.TestCase):
             af.http.close()
             af.http = httpx.Client(base_url="http://fixture", transport=httpx.MockTransport(handler))
             self.addCleanup(af.http.close)
-            with patch("kg.dataset.create_models", side_effect=lambda *args, **kwargs: BoundaryModels()), \
-                    patch("kg.dataset.database", return_value=af), \
+            with patch("kg.dataset.database", return_value=af), \
                     patch("kg.dataset.binary_info", return_value={"version": "isolated_fixture"}):
                 with self.assertRaises(ValueError):
                     dataset.build(cfg, max_passages=1)
-            self.assertTrue(failed_probe, "The build must reach the intentionally rejected indexed-vector probe")
+            self.assertTrue(probes, "The build must reach the intentionally rejected passage probe")
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(dataset.load_build(cfg), previous)
 
@@ -525,67 +307,59 @@ class FocusedSearchBoundaries(unittest.TestCase):
                 intent = interpret_intent(cfg, question, focus)
                 self.assertEqual((intent["status"], intent["predicate"], intent["direction"], intent["label"]),
                                  ("focused", "parent_of", direction, label))
+        self.assertEqual(interpret_intent({"extraction": {"relations": {"affects": {}}}}, "What affects the oxygen tank?",
+                                          {"text": "oxygen\n\ntank"})["predicate"], "affects")
         self.assertEqual(interpret_intent(cfg, "Why is Tyrion Lannister sad?", focus)["status"], "unrecognized")
         self.assertEqual(interpret_intent(cfg, "Who are Tyrion Lannister's sons?", focus)["status"], "unrecognized")
         self.assertEqual(interpret_intent({"extraction": {"relations": {}}},
                                         "Who is Tyrion Lannister's father?", focus)["status"], "unrecognized")
         self.assertEqual(interpret_intent(cfg, "Who is Tyrion Lannister's father?", focus, navigate=True)["status"], "all")
 
-    def test_specific_parent_requires_the_actual_ordered_mentions(self):
-        for text, expected in (
-            ("😀 Ned is the father of Árya.", True),
-            ("Árya's father is Ned.", True),
-            ("Ned is the parent of Árya.", False),
-            ("Ned is the mother of Árya.", False),
-            ("Ned is not the father of Árya.", False),
-            ("Ned met Árya. Elsewhere Jon's father arrived.", False),
-        ):
-            with self.subTest(text=text):
-                assertion = {"text": text, "head": mention(text, "Ned"), "tail": mention(text, "Árya")}
-                self.assertEqual(_specific_parent(assertion, "father"), expected)
-
     def relationship_fixture(self):
+        """Passages plus the facts Antfly's extractor and resolver would materialize."""
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         cfg = config(directory.name)
         text = "😀 Ned is the father of Árya. Cersei is the mother of Árya."
         _, _, text = source_fixture(cfg, text)
         sources = {row["id"]: row for row in read_manifest(cfg)}
-        passages, analyses = [], {}
-        with closing(dataset.Cache(cfg)) as cache:
-            for start, end, parent in (
-                (0, text.index(" Cersei"), "Ned"),
-                (text.index("Cersei"), len(text), "Cersei"),
-            ):
-                excerpt = text[start:end]
-                key = "passage:" + dataset.digest(["s1", sources["s1"]["sha256"], start, end, excerpt])[:24]
-                head, tail = mention(excerpt, parent), mention(excerpt, "Árya")
-                models = BoundaryModels({"entities": [head, tail], "relations": [proposal(head, tail)]},
-                                        winner="parent_of")
-                analyses[key] = analyze_chunk(cfg, excerpt, cache, models)
-                passages.append({"id": key, "source_id": "s1", "source_start": start,
-                                 "source_end": end, "text": excerpt})
-        docs = graph_documents(cfg, {"sources": sources, "passages": passages}, analyses)
+        docs, facts = {}, []
+        for start, end, parent in ((0, text.index(" Cersei"), "Ned"), (text.index("Cersei"), len(text), "Cersei")):
+            excerpt = text[start:end]
+            key = "passage:" + dataset.digest(["s1", sources["s1"]["sha256"], start, end, excerpt])[:24]
+            docs[key] = {"text": excerpt, "source_id": "s1", "source_start": start, "source_end": end,
+                         "kind": "passage", "passage_id": key}
 
-        def matches(row, query):
-            if "conjuncts" in query:
-                return all(matches(row, clause) for clause in query["conjuncts"])
-            if "disjuncts" in query:
-                return any(matches(row, clause) for clause in query["disjuncts"])
-            return row.get(query["field"]) == query["term"]
+            def span(surface):  # the extractor reports UTF-8 byte offsets
+                begin = len(excerpt[:excerpt.index(surface)].encode("utf-8"))
+                return {"text": surface, "label": "character", "start": begin, "end": begin + len(surface.encode("utf-8"))}
+            facts.append({"from": "entity/" + parent.lower(), "to": "entity/árya", "type": "parent_of",
+                          "owner_document": key, "weight": .9, "metadata": {"source": span(parent), "target": span("Árya")}})
+        entities = {"entity/" + name.lower(): {"canonical_name": name, "entity_type": "character", "aliases": [name]}
+                    for name in ("Ned", "Cersei", "Árya")}
 
         class Index:
             def get(self, table, key):
-                return docs.get(key)
+                return entities.get(key) or docs.get(key)
+
+            def traverse(self, table, index, keys, edge_types, direction, **options):
+                start, = keys
+                if edge_types == ["mentions"]:
+                    return [{"key": k} for k, d in docs.items() if entities[start]["canonical_name"] in d["text"]]
+                nodes = []
+                for f in facts:
+                    stored = (f["from"], f["to"]) if direction == "out" else (f["to"], f["from"])
+                    if f["type"] in edge_types and stored[0] == start:
+                        nodes.append({"key": stored[1], "path_edges": [{**f, "from": {"key": start}, "to": {"key": stored[1]},
+                                                                        "direction": direction}]})
+                return nodes
 
             def query(self, table, body):
-                selected = [{"_id": key, "_source": row} for key, row in docs.items()
-                            if matches(row, body["filter_query"])]
-                return {"responses": [{"hits": {"hits": selected[:body["limit"]],
-                                                "total": {"value": len(selected), "relation": "eq"}}}]}
+                wanted = {clause["term"] for clause in body["filter_query"]["disjuncts"]}
+                selected = [{"_id": key, "_source": row} for key, row in docs.items() if key in wanted]
+                return {"responses": [{"hits": {"hits": selected, "total": {"value": len(selected), "relation": "eq"}}}]}
 
-        focus_id = next(key for key, row in docs.items() if row.get("kind") == "entity" and row["text"] == "Árya")
-        focus = {"id": focus_id, "text": "Árya", "type": "character"}
+        focus = {"id": "entity/árya", "text": "Árya", "type": "character"}
         return cfg, Index(), {"table": "isolated"}, focus, sources, docs
 
     def test_focused_relationships_have_their_own_evidence_and_parent_direction(self):
@@ -598,24 +372,55 @@ class FocusedSearchBoundaries(unittest.TestCase):
         for edge in graph["edges"]:
             evidence, = edge["evidence"]
             self.assertEqual(evidence["text"], sources["s1"]["text"][evidence["source_start"]:evidence["source_end"]])
-            self.assertIn(evidence["passage_id"], docs)
+            fact, = edge["facts"]
+            self.assertEqual(evidence["text"][fact["tail"]["start"]:fact["tail"]["end"]], "Árya")
         father = interpret_intent(cfg, "Who is Árya's father?", focus)
-        graph, _ = _relationships(cfg, index, manifest, focus, father, sources)
-        edge, = graph["edges"]
-        self.assertEqual(names[edge["source"]], "Ned")
-        self.assertEqual(edge["predicate"], "parent_of")
-        self.assertNotIn("Cersei", edge["evidence"][0]["text"])
+        graph, notes = _relationships(cfg, index, manifest, focus, father, sources)
+        self.assertEqual(len(graph["edges"]), 2)
+        self.assertTrue(any("father from a mother" in note for note in notes))
         children = interpret_intent(cfg, "Who are Árya's children?", focus)
         graph, _ = _relationships(cfg, index, manifest, focus, children, sources)
         self.assertEqual(graph["edges"], [])
 
-    def test_indexed_assertion_must_belong_to_its_exact_supporting_passage(self):
+    def test_a_question_focuses_the_one_name_its_relationship_frame_is_about(self):
+        cfg = {"extraction": {"relations": {"parent_of": {}}}}
+        rows = [{"id": "f", "text": "father", "type": "house"}, {"id": "t", "text": "Tyrion Lannister", "type": "character"}]
+        question = "Who is Tyrion Lannister's father?"
+        about = [row["id"] for row in match_candidates(question, rows) if interpret_intent(cfg, question, row)["status"] == "focused"]
+        self.assertEqual(about, ["t"])
+
+    def test_parallel_facts_vote_for_one_labelled_connection_per_pair(self):
         cfg, index, manifest, focus, sources, docs = self.relationship_fixture()
-        key = next(key for key, row in docs.items() if row.get("kind") == "passage")
-        docs[key] = {**docs[key], "analysis": {**docs[key]["analysis"], "assertions": []}}
-        intent = interpret_intent(cfg, "Who are Árya's parents?", focus)
-        with self.assertRaises(ValueError):
-            _relationships(cfg, index, manifest, focus, intent, sources)
+        key = next(iter(docs))
+        text = docs[key]["text"]
+
+        def span(surface):
+            begin = len(text[:text.index(surface)].encode("utf-8"))
+            return {"text": surface, "label": "character", "start": begin, "end": begin + len(surface.encode("utf-8"))}
+        knows = {"type": "knows", "owner_document": key, "weight": .5, "direction": "out",
+                 "from": {"key": "entity/árya"}, "to": {"key": "entity/ned"},
+                 "metadata": {"source": span("Árya"), "target": span("Ned")}}
+        original = index.traverse
+
+        def traverse(table, idx, keys, edge_types, direction, **options):
+            extra = [{"key": "entity/ned", "path_edges": [knows]}] * 2 if direction == "out" and "knows" in edge_types else []
+            return original(table, idx, keys, edge_types, direction, **options) + extra
+        index.traverse = traverse
+        everything = {"status": "all", "label": "all", "predicate": None, "direction": "both"}
+        graph, _ = _relationships(cfg, index, manifest, focus, everything, sources)
+        ned = next(e for e in graph["edges"] if "entity/ned" in (e["source"], e["target"]))
+        self.assertEqual((ned["predicate"], ned["source"], ned["target"], ned["support"]), ("knows", "entity/árya", "entity/ned", 3))
+        self.assertEqual([(v["predicate"], v["count"]) for v in ned["votes"]], [("knows", 2), ("parent_of", 1)])
+
+    def test_a_fact_whose_spans_do_not_match_its_passage_is_skipped_and_reported(self):
+        cfg, index, manifest, focus, sources, docs = self.relationship_fixture()
+        key = next(iter(docs))
+        docs[key] = {**docs[key], "text": docs[key]["text"].replace("Ned", "Jon")}
+        with patch("kg.search._verified_passage", side_effect=lambda cfg, sources, key, row: row):
+            graph, notes = _relationships(cfg, index, manifest, focus,
+                                          interpret_intent(cfg, "Who are Árya's parents?", focus), sources)
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertTrue(any("skipped" in note for note in notes))
 
 
 if __name__ == "__main__":

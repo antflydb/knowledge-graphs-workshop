@@ -68,7 +68,12 @@ mark { background: color-mix(in srgb, var(--mark) 16%, transparent); color: inhe
 .brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
 .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
 .slash { color: var(--ink-3); }
-.brand h1 { font-size: 17px; font-weight: 500; letter-spacing: -.01em; color: var(--ink-2); }
+.tabs { display: flex; gap: 4px; }
+.tabs a { font-size: 15px; font-weight: 500; color: var(--ink-3); text-decoration: none; padding: 4px 10px; border-radius: 8px; }
+.tabs a:hover { color: var(--ink-2); }
+.tabs a[aria-current=page] { color: var(--ink); background: var(--field); }
+#playground-frame { border: 0; width: 100%; height: 100%; display: block; background: var(--canvas); }
+body.playground .workspace, body.playground .foot, body.playground #search-form, body.playground #status { display: none !important; }
 #search-form { flex: 1 1 520px; min-width: 0; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row label { display: flex; align-items: center; gap: 8px; margin: 0; }
@@ -96,6 +101,15 @@ main:not([hidden]) ~ .empty { display: none; }
 #focus-candidates { display: flex; flex-wrap: wrap; gap: 6px; }
 #focus-candidates:empty { display: none; }
 #focus-candidates button { border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+#focus-summary { font: 12px var(--mono); color: var(--ink-2); }
+#focus-summary:empty, #name-groups:empty { display: none; }
+#name-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#name-groups .caption { margin-right: 2px; }
+#name-groups button { border-radius: 8px; padding: 3px 10px; font-size: 13px; text-align: left; }
+#name-groups button span { font: 11px var(--mono); color: var(--ink-3); margin-left: 6px; }
+#name-groups button[aria-pressed=true] { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+.decide { font: 12px var(--mono); color: var(--ink-2); }
+.decide b { color: var(--ink); font-weight: 500; }
 .stage-note { padding: 0 20px; }
 .focus-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #graph-help { padding: 0 20px; }
@@ -154,8 +168,6 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 .drawer h2 { font-size: 15px; margin-top: 18px; }
 .drawer label { display: block; margin: 8px 0; color: var(--ink-2); }
 .drawer .card { margin: 10px 0; }
-.drawer .card label { display: flex; align-items: center; gap: 6px; }
-.experiment { border-top: 1px solid var(--rule); padding-top: 8px; }
 
 @media (max-width: 900px) {
   body { display: block; overflow: auto; height: auto; }
@@ -175,7 +187,8 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 </head>
 <body>
 <header class="top">
-<div class="brand"><span class="wordmark">antfly</span><span class="slash">/</span><h1>Core dataset graph search</h1></div>
+<div class="brand"><span class="wordmark">antfly</span><span class="slash">/</span>
+<nav class="tabs" aria-label="Workshop pages"><a href="#" id="tab-search" aria-current="page">Graph search</a><a href="#text-to-graph" id="tab-playground">Text to graph</a></nav></div>
 <form id="search-form">
 <div class="row">
 <label><span class="sr">Dataset</span><select id="dataset"><option value="asoiaf">ASoIaF</option><option value="pizza-portland">Portland pizza</option><option value="apollo13">Apollo 13</option></select></label>
@@ -186,6 +199,7 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 </form>
 <p id="status" role="status" aria-live="polite">Choose a dataset and search.</p>
 </header>
+<iframe id="playground-frame" title="Text to graph playground" hidden></iframe>
 <div class="workspace">
 <main id="search-output" hidden>
 <section class="stage" aria-labelledby="focus-title">
@@ -193,8 +207,10 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 <h2 id="search-title">Last successful search</h2>
 <p id="build-notice" class="caption"></p>
 <h2 id="focus-title">Entity relationships</h2>
+<p id="focus-summary"></p>
 <p id="relationship-status" class="notice"></p>
 <div id="focus-candidates" aria-label="Choose an indexed entity"></div>
+<div id="name-groups" aria-label="Entity nodes sharing a word with this name"></div>
 </div>
 <p class="caption stage-note">Model-extracted relationships between name groups—not verified identities.</p>
 <div class="focus-layout">
@@ -222,28 +238,16 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 <details id="developer">
 <summary>Developer</summary>
 <div class="drawer">
-<label>Runtime track <select id="track" form="search-form"><option value="stable">stable · Python / Antfly v0.2.5</option><option value="latest">latest · native main (requires qualified build/service)</option></select></label>
-<p class="caption">Track applies to the next search. Recenter and Decide use the displayed successful search's dataset and track.</p>
+<p class="caption">Antfly v0.3.0-rc.1 extracted every relationship at ingest with GLiNER2.5. “Ask Decide” re-classifies one relationship on demand with GLiNER2.5-Decide; nothing is written back.</p>
 <details id="request-error-details" hidden><summary>Last request error</summary><pre id="request-error"></pre></details>
+<h2>Decide settings</h2>
+<label>Instruction <textarea id="instruction" rows="3"></textarea></label>
+<label>Label descriptions (optional JSON object; blank uses every predicate allowed for the pair's entity types, plus no_relation and unclear) <textarea id="labels" rows="5" spellcheck="false"></textarea></label>
 <div id="developer-output" hidden>
-<details><summary>Search packet and timings</summary><pre id="diagnostics"></pre></details>
-<details><summary>Transient query: saved extraction, proposals, decisions and assertions</summary><pre id="query-analysis"></pre></details>
-<h2>Raw retrieval passages</h2>
-<p class="caption">Developer/experiment inputs; separate from the independently ranked top text result and selected relationship evidence.</p>
+<details><summary>Search packet</summary><pre id="diagnostics"></pre></details>
+<h2>Retrieved passages</h2>
+<p class="caption">Hybrid BM25 + vector ranking, independent of the relationship view.</p>
 <div id="results"></div>
-<section id="experiment-panel">
-<h2>Optional fresh-question Decide experiment</h2>
-<p id="experiment-context"></p>
-<p>This separately classifies the last successful query against each selected passage and both complete model graphs. It does not reorder results or add graph facts. Scores are not calibrated truth. The compiled model has a 512-token/request limit: oversized inputs fail visibly, without truncation. Choose a shorter passage when needed.</p>
-<form id="experiment-form">
-<label>Instruction <textarea id="instruction" rows="4" required></textarea></label>
-<label>Label descriptions (JSON object, at least two unique labels) <textarea id="labels" rows="7" spellcheck="false" required></textarea></label>
-<label>Result count <select id="result-count"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select> (or choose up to three raw passages above)</label>
-<button id="decide-button" type="submit">Run Decide on selected passages</button>
-</form>
-<p id="experiment-status" role="status" aria-live="polite"></p>
-<div id="experiments"></div>
-</section>
 </div>
 </div>
 </details>
@@ -254,8 +258,8 @@ svg .node:focus rect, svg .edge:focus path:not(.hit) { stroke: var(--accent); st
 const defaults = JSON.parse(document.getElementById('defaults').textContent);
 const $ = id => document.getElementById(id);
 const json = value => JSON.stringify(value, null, 2);
-let lastSearch = null, busy = false, runNumber = 0, selectedEdgeId = null;
-const edits = new Map(), history = [];
+let lastSearch = null, busy = false, selectedEdgeId = null;
+const history = [];
 function element(tag, text, cls) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -265,16 +269,10 @@ function element(tag, text, cls) {
 function setBusy(value) {
   busy = value;
   $('search-button').disabled = value;
-  $('decide-button').disabled = value;
   $('back-button').disabled = value || history.length === 0;
-  document.querySelectorAll('.recenter').forEach(button => { button.disabled = value; });
+  document.querySelectorAll('.recenter, .ask-decide').forEach(button => { button.disabled = value; });
   $('graph').setAttribute('aria-busy', String(value));
 }
-function saveEdits() {
-  if (lastSearch) edits.set(lastSearch.dataset, {instruction: $('instruction').value, labels: $('labels').value});
-}
-$('instruction').addEventListener('input', saveEdits);
-$('labels').addEventListener('input', saveEdits);
 async function post(url, data) {
   const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
   const text = await response.text();
@@ -297,7 +295,7 @@ function externalLink(url, text) {
     const link = element('a', text); link.href = parsed.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; return link;
   } catch { return null; }
 }
-function citationView(citation = {}, sourceId, datasetName, developer = false) {
+function citationView(citation = {}, sourceId, datasetName) {
   const box = element('div');
   box.append(element('p', citation.title || 'Source', 'caption'));
   const links = element('p', undefined, 'source-links');
@@ -313,86 +311,93 @@ function citationView(citation = {}, sourceId, datasetName, developer = false) {
   box.append(links);
   const context = [citation.met, citation.speaker, citation.printed_label].filter(Boolean);
   if (context.length) box.append(element('p', context.join(' · '), 'caption'));
-  if (developer) {
-    const detail = element('details'); detail.append(element('summary', 'Citation, offsets and provenance'), element('pre', json(citation))); box.append(detail);
-  }
   return box;
 }
-const canonical = text => String(text).normalize('NFKC').toLowerCase().replace(/ß/g, 'ss').replace(/ς/g, 'σ').trim().replace(/\s+/gu, ' ');
-function highlightedText(row, endpoints) {
-  const passage = element('p', undefined, 'passage'), chars = Array.from(row.text || '');
-  const spans = (row.analysis?.entities || []).filter(mention =>
-    Number.isInteger(mention.start) && Number.isInteger(mention.end) && mention.start >= 0 && mention.end <= chars.length && mention.end > mention.start &&
-    chars.slice(mention.start, mention.end).join('') === mention.text &&
-    endpoints.some(node => node.type === (mention.label || mention.type) && canonical(node.text) === canonical(mention.text))
-  ).sort((a,b) => a.start - b.start || b.end - a.end);
+function highlightedText(text, spans = []) {
+  // Spans are character offsets; Array.from walks the same code points.
+  const passage = element('p', undefined, 'passage'), chars = Array.from(text || '');
   let cursor = 0;
-  for (const span of spans) {
-    if (span.start < cursor) continue;
+  for (const span of [...spans].sort((a, b) => a.start - b.start || b.end - a.end)) {
+    if (span.start < cursor || span.end > chars.length) continue;
     passage.append(document.createTextNode(chars.slice(cursor, span.start).join('')), element('mark', chars.slice(span.start, span.end).join('')));
     cursor = span.end;
   }
   passage.append(document.createTextNode(chars.slice(cursor).join('')));
   return passage;
 }
-function selectedPassages() {
-  return [...document.querySelectorAll('input.passage-choice:checked')].map(input => input.value);
-}
-function synchronizeCount() {
-  const count = selectedPassages().length;
-  if (count) $('result-count').value = String(count);
-}
 function renderResults(packet) {
   $('results').replaceChildren();
   const rows = packet.results || [];
-  if (!rows.length) $('results').append(element('p', 'No raw retrieval passages were returned.'));
+  if (!rows.length) $('results').append(element('p', 'No passages were returned.'));
   rows.forEach((row, index) => {
     const card = element('article', undefined, 'card');
     card.append(element('h3', `${index + 1}. ${row.citation?.title || 'Passage'}`));
-    card.append(element('p', `Passage ${row.passage_id} · retrieval score ${row.score ?? 'not supplied'}`, 'caption'));
-    card.append(element('p', row.text, 'passage'));
-    card.append(citationView(row.citation, row.source_id, lastSearch.dataset, true));
-    const detail = element('details'); detail.append(element('summary', 'Stored passage analysis: NER, proposals, decisions and assertions'), element('pre', json(row.analysis))); card.append(detail);
-    const label = element('label'), choice = element('input'); choice.type = 'checkbox'; choice.className = 'passage-choice'; choice.value = row.passage_id; choice.checked = index === 0;
-    choice.addEventListener('change', () => {
-      if (selectedPassages().length > 3) { choice.checked = false; $('experiment-status').textContent = 'Choose at most three passages.'; }
-      synchronizeCount();
-    });
-    label.append(choice, document.createTextNode(' Include in independent Decide experiment')); card.append(label); $('results').append(card);
+    card.append(element('p', `${row.passage_id} · score ${row.score ?? '—'}`, 'caption'));
+    card.append(element('p', row.text, 'passage'), citationView(row.citation, row.source_id, lastSearch.dataset));
+    $('results').append(card);
   });
-  $('result-count').value = '1';
 }
 function selectedEdge() { return (lastSearch?.packet.graph.edges || []).find(edge => edge.id === selectedEdgeId); }
-function endpointsFor(edge) {
-  return (lastSearch.packet.graph.nodes || []).filter(node => node.id === edge.source || node.id === edge.target);
-}
-function samePassage(left, right) {
-  return Boolean(left && right && ((left.passage_id && left.passage_id === right.passage_id) ||
-    (left.source_id && left.source_id === right.source_id && Number.isInteger(left.source_start) && left.source_start === right.source_start && left.source_end === right.source_end)));
-}
+function factsIn(edge, passageId) { return (edge?.facts || []).filter(fact => fact.passage_id === passageId); }
 function renderTopResult() {
   const box = $('top-result'), row = lastSearch.packet.top_result, edge = selectedEdge(); box.replaceChildren(); box.classList.remove('related');
   if (!row) { box.append(element('p', 'No independently ranked text result was returned.')); return; }
-  const supporting = edge && (edge.evidence || []).some(evidence => samePassage(evidence, row));
+  const facts = factsIn(edge, row.passage_id);
   box.append(element('h3', row.citation?.title || 'Text match'));
-  if (supporting) { box.classList.add('related'); box.append(element('p', 'This same passage is also cited for the selected relationship.', 'caption')); }
-  const highlights = supporting ? endpointsFor(edge) : (row.analysis?.entities || []).map(span => ({text: span.text, type: span.label}));
-  box.append(highlightedText(row, highlights), citationView(row.citation, row.source_id, lastSearch.dataset));
+  if (facts.length) { box.classList.add('related'); box.append(element('p', 'This same passage is also cited for the selected relationship.', 'caption')); }
+  box.append(highlightedText(row.text, facts.flatMap(fact => [fact.head, fact.tail])), citationView(row.citation, row.source_id, lastSearch.dataset));
 }
 function edgeDescription(edge) {
   const nodes = new Map((lastSearch.packet.graph.nodes || []).map(node => [node.id, node]));
   return `${nodes.get(edge.source)?.text || 'Entity'} → ${edge.label || edge.predicate.replaceAll('_', ' ')} → ${nodes.get(edge.target)?.text || 'Entity'}`;
 }
+function edgeLabel(edge) {
+  const label = edge.label || edge.predicate.replaceAll('_', ' ');
+  return edge.support ? `${label} ×${edge.support}` : label;
+}
+function scoreLine(prefix, scores) {
+  const line = element('p', undefined, 'decide');
+  line.append(document.createTextNode(prefix));
+  Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 4).forEach(([label, score], index) => {
+    if (index) line.append(document.createTextNode(' · '));
+    line.append(element(index ? 'span' : 'b', `${label.replaceAll('_', ' ')} ${score.toFixed(2)}`));
+  });
+  return line;
+}
+async function askDecide(fact, slot) {
+  let labels = null;
+  const raw = $('labels').value.trim();
+  if (raw) {
+    try { labels = JSON.parse(raw); }
+    catch (error) { slot.replaceChildren(element('p', 'Label JSON is invalid: ' + error.message, 'error')); return; }
+  }
+  setBusy(true); slot.replaceChildren(element('p', 'Asking Decide…', 'caption'));
+  try {
+    const response = await post('/api/decide', {dataset: lastSearch.dataset, build_id: lastSearch.packet.build_id,
+      passage_id: fact.passage_id, head: fact.head, tail: fact.tail, instruction: $('instruction').value || null, labels});
+    slot.replaceChildren(response.ok ? scoreLine('Decide: ', response.packet.scores)
+      : element('p', `HTTP ${response.status}: ${errorText(response.packet)}`, 'error'));
+  } catch (error) { slot.replaceChildren(element('p', error.message, 'error')); }
+  finally { setBusy(false); }
+}
 function renderEvidence() {
   const box = $('evidence'), edge = selectedEdge(); box.replaceChildren();
   box.append(element('h2', 'Relationship sources'));
-  if (!edge) { box.append(element('p', 'Select a relationship arrow or its button to read the actual indexed source excerpts. The text match below is ranked independently.')); return; }
-  box.append(element('h3', edgeDescription(edge)), element('p', 'Model-predicted relationship; source text remains authoritative.', 'caption'));
-  const evidence = edge.evidence || [];
-  if (!evidence.length) box.append(element('p', 'No supporting source excerpts are available for this relationship.'));
-  evidence.forEach(row => {
-    const quote = element('section', undefined, 'card');
-    quote.append(highlightedText(row, endpointsFor(edge)), citationView(row.citation, row.source_id, lastSearch.dataset)); box.append(quote);
+  if (!edge) { box.append(element('p', 'Select a relationship arrow or its button to read the passages it was extracted from.')); return; }
+  const names = new Map((lastSearch.packet.graph.nodes || []).map(node => [node.id, node.text]));
+  box.append(element('h3', edgeDescription(edge)), element('p', 'Extracted by GLiNER2.5 at ingest. Each passage votes; the majority labels the connection. The source text is authoritative.', 'caption'));
+  if ((edge.votes || []).length > 1) box.append(element('p', 'Votes: ' + edge.votes.map(v =>
+    `${v.predicate.replaceAll('_', ' ')} ×${v.count} (${names.get(v.source) || v.source} → ${names.get(v.target) || v.target})`).join(' · '), 'decide'));
+  (edge.evidence || []).forEach(row => {
+    const quote = element('section', undefined, 'card'), facts = factsIn(edge, row.passage_id);
+    quote.append(highlightedText(row.text, facts.flatMap(fact => [fact.head, fact.tail])));
+    for (const fact of facts) {
+      const line = element('p', `GLiNER: ${fact.head.text} → ${(fact.predicate || edge.predicate).replaceAll('_', ' ')} → ${fact.tail.text} · ${(fact.score ?? 0).toFixed(2)} `, 'decide');
+      const slot = element('div'), button = element('button', 'Ask Decide', 'ask-decide'); button.type = 'button';
+      button.addEventListener('click', () => { if (!busy) askDecide(fact, slot); });
+      line.append(button); quote.append(line, slot);
+    }
+    quote.append(citationView(row.citation, row.source_id, lastSearch.dataset)); box.append(quote);
   });
 }
 function selectEdge(id) {
@@ -418,7 +423,7 @@ function activate(node, action) {
 }
 function recenter(node, navigate = true) {
   if (busy || !lastSearch) return;
-  search({dataset: lastSearch.dataset, track: lastSearch.track, text: navigate ? node.text : lastSearch.text, focus_id: node.id, build_id: lastSearch.packet.build_id, navigate});
+  search({dataset: lastSearch.dataset, text: navigate ? node.text : lastSearch.text, focus_id: node.id, build_id: lastSearch.packet.build_id, navigate});
 }
 function wrapName(text) {
   const words = String(text).split(/\s+/), lines = [''];
@@ -462,9 +467,9 @@ function renderGraph(graph) {
       ty = neighbor ? neighbor.y + offset / 2 - 9 : (sy + ey) / 2 + offset / 2 - 9;
     }
     const group = svgElement('g', {class: 'edge', 'data-edge-id': edge.id, 'aria-label': 'Read sources: ' + edgeDescription(edge)});
-    group.append(svgElement('path', {d: path, class: 'hit'}), svgElement('path', {d: path, 'marker-end': 'url(#arrow)'}), svgElement('text', {x: tx, y: ty, 'text-anchor': 'middle'}, edge.label || edge.predicate.replaceAll('_',' ')), svgElement('title', {}, edgeDescription(edge)));
+    group.append(svgElement('path', {d: path, class: 'hit'}), svgElement('path', {d: path, 'marker-end': 'url(#arrow)'}), svgElement('text', {x: tx, y: ty, 'text-anchor': 'middle'}, edgeLabel(edge)), svgElement('title', {}, edgeDescription(edge)));
     activate(group, () => selectEdge(edge.id)); svg.append(group);
-    const button = element('button', edgeDescription(edge)); button.type = 'button'; button.setAttribute('data-edge-id', edge.id); button.setAttribute('aria-pressed', 'false'); button.addEventListener('click', () => { if (!busy) selectEdge(edge.id); }); $('edge-options').append(button);
+    const button = element('button', edge.support ? `${edgeDescription(edge)} ×${edge.support}` : edgeDescription(edge)); button.type = 'button'; button.setAttribute('data-edge-id', edge.id); button.setAttribute('aria-pressed', 'false'); button.addEventListener('click', () => { if (!busy) selectEdge(edge.id); }); $('edge-options').append(button);
   });
   nodes.forEach(node => {
     const {x,y} = positions.get(node.id), group = svgElement('g', {class: 'node' + (node.id === focus.id ? ' focus' : ''), 'aria-label': `Recenter on ${node.text}, ${node.type}`});
@@ -480,17 +485,17 @@ function renderGraph(graph) {
   $('graph-counts').hidden = !edges.length;
 }
 function renderTimings(timings = {}) {
-  $('timings').textContent = ['extraction', 'relations', 'intent', 'embedding', 'retrieval']
+  $('timings').textContent = ['extraction', 'retrieval', 'name_groups']
     .filter(stage => timings[stage] && Number.isFinite(timings[stage].ms))
-    .map(stage => `${stage[0].toUpperCase() + stage.slice(1)} ${Math.round(timings[stage].ms)} ms`)
+    .map(stage => `${(stage[0].toUpperCase() + stage.slice(1)).replace('_', ' ')} ${Math.round(timings[stage].ms)} ms`)
     .concat(Number.isFinite(timings.total_ms) ? `Total ${Math.round(timings.total_ms)} ms` : []).join(' • ');
 }
 function renderSearch() {
-  const {packet, dataset, track, text} = lastSearch;
-  $('dataset').value = dataset; $('track').value = track; $('query').value = text;
+  const {packet, dataset, text} = lastSearch;
+  $('dataset').value = dataset; $('query').value = text;
   $('search-output').hidden = false; $('developer-output').hidden = false;
   $('search-title').textContent = `${defaults[dataset].title} — ${text}`;
-  $('build-notice').textContent = `${packet.partial ? 'Partial build · selected passages only' : 'Complete indexed build'} · ${track}`;
+  $('build-notice').textContent = packet.partial ? 'Partial build · selected passages only' : 'Complete indexed build';
   $('status').className = ''; $('status').textContent = 'Search complete.';
   const edges = packet.graph?.edges || [];
   const requested = packet.intent?.status === 'focused' ? ` · ${packet.intent.label}` : '';
@@ -502,8 +507,7 @@ function renderSearch() {
       : !edges.length ? 'No matching extracted relationship found. The top text match is below.'
         : 'Select a connection to read its supporting source. Select another name to explore.';
   $('evidence').hidden = !edges.length;
-  if (packet.focus_candidates_complete === false || packet.graph?.scan_complete === false ||
-      packet.focus_candidates_omitted > 0 || packet.graph?.omitted_assertions > 0) {
+  if (packet.focus_candidates_complete === false || packet.graph?.scan_complete === false || packet.focus_candidates_omitted > 0) {
     $('relationship-status').textContent += ' Showing a bounded selection; more indexed matches may exist.';
   }
   $('focus-candidates').replaceChildren();
@@ -514,90 +518,61 @@ function renderSearch() {
     const button = element('button', `Explore ${node.text} (${node.type})`, 'recenter'); button.type = 'button';
     button.addEventListener('click', () => recenter(node, true)); $('focus-candidates').append(button);
   }
-  $('diagnostics').textContent = json(packet); $('query-analysis').textContent = json(packet.query.analysis);
-  $('experiment-context').textContent = `Uses last successful search: ${dataset} / ${track} — ${packet.query.text}`;
+  const summary = packet.graph?.focus_summary;
+  $('focus-summary').textContent = summary ? [
+    `${packet.focus.id}`, `aliases: ${summary.aliases.join(', ')}`, `in ${summary.passages} passages`,
+    ...Object.entries(summary.predicates).map(([p, c]) => `${p.replaceAll('_', ' ')}: ${c.relationships} links / ${c.facts} facts`)
+  ].join(' · ') : '';
+  $('name-groups').replaceChildren();
+  if ((packet.name_groups || []).length) {
+    $('name-groups').append(element('span', 'Name groups:', 'caption'));
+    for (const group of packet.name_groups) {
+      const button = element('button', group.text, 'recenter'); button.type = 'button';
+      button.append(element('span', `${group.type} · ${group.passages} passages · ${group.neighbors} neighbors`));
+      button.title = `${group.id} — aliases: ${group.aliases.join(', ')}`;
+      button.setAttribute('aria-pressed', String(group.id === packet.focus?.id));
+      button.addEventListener('click', () => recenter(group, true)); $('name-groups').append(button);
+    }
+  }
+  $('diagnostics').textContent = json(packet);
   renderResults(packet); renderGraph(packet.graph); renderEvidence(); renderTopResult(); renderTimings(packet.timings);
   if (selectedEdgeId) selectEdge(selectedEdgeId);
 }
-function snapshot() {
-  if (!lastSearch) return null;
-  return {search: lastSearch, edge: selectedEdgeId, instruction: $('instruction').value, labels: $('labels').value,
-    count: $('result-count').value, passages: selectedPassages(), experiments: [...$('experiments').childNodes].map(node => node.cloneNode(true)),
-    experimentStatus: $('experiment-status').textContent, developerOpen: $('developer').open,
-    detailsOpen: [...$('developer').querySelectorAll('details')].map(node => node.open),
-    requestError: $('request-error').textContent, requestErrorHidden: $('request-error-details').hidden, scroll: window.scrollY};
-}
 async function search(selection) {
   if (busy) return;
-  const previous = snapshot();
-  setBusy(true); $('status').className = ''; $('status').textContent = selection.navigate ? 'Opening indexed entity relationships…' : 'Analyzing query and retrieving indexed relationships and text…';
+  const previous = lastSearch ? {search: lastSearch, edge: selectedEdgeId} : null;
+  setBusy(true); $('status').className = ''; $('status').textContent = selection.navigate ? 'Opening relationships…' : 'Searching…';
   try {
     const response = await post('/api/search', selection);
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${errorText(response.packet)}`);
-    saveEdits(); if (previous) history.push(previous);
+    if (previous) history.push(previous);
+    if (!lastSearch || lastSearch.dataset !== selection.dataset) $('instruction').value = defaults[selection.dataset].instruction;
     lastSearch = {...selection, packet: response.packet}; selectedEdgeId = null;
-    const saved = edits.get(selection.dataset), configured = defaults[selection.dataset].query_decision;
-    $('instruction').value = saved ? saved.instruction : configured.instruction;
-    $('labels').value = saved ? saved.labels : json(configured.labels);
-    $('experiment-status').textContent = ''; $('experiments').replaceChildren();
     renderSearch();
   } catch (error) {
-    $('status').className = 'error'; $('status').textContent = `${error.message}${lastSearch ? '\nPrevious successful view and experiment edits are retained below.' : ''}`;
+    $('status').className = 'error'; $('status').textContent = `${error.message}${lastSearch ? '\nThe previous view is retained below.' : ''}`;
   } finally { setBusy(false); }
 }
 $('search-form').addEventListener('submit', event => {
-  event.preventDefault(); search({dataset: $('dataset').value, track: $('track').value, text: $('query').value});
+  event.preventDefault(); search({dataset: $('dataset').value, text: $('query').value});
 });
 $('back-button').addEventListener('click', () => {
   if (busy || !history.length) return;
-  saveEdits(); const state = history.pop(); lastSearch = state.search; selectedEdgeId = state.edge;
-  renderSearch(); $('instruction').value = state.instruction; $('labels').value = state.labels; $('result-count').value = state.count;
-  document.querySelectorAll('input.passage-choice').forEach(input => { input.checked = state.passages.includes(input.value); });
-  $('experiments').replaceChildren(...state.experiments); $('experiment-status').textContent = state.experimentStatus; $('developer').open = state.developerOpen;
-  $('request-error').textContent = state.requestError; $('request-error-details').hidden = state.requestErrorHidden;
-  $('developer').querySelectorAll('details').forEach((node, index) => { node.open = state.detailsOpen[index] || false; });
-  saveEdits(); setBusy(false); window.scrollTo(0, state.scroll);
+  const state = history.pop(); lastSearch = state.search; selectedEdgeId = state.edge;
+  renderSearch(); setBusy(false);
 });
-$('result-count').addEventListener('change', () => {
-  const count = Number($('result-count').value);
-  document.querySelectorAll('input.passage-choice').forEach((input, index) => { input.checked = index < count; });
-});
-$('experiment-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (busy || !lastSearch) return;
-  saveEdits();
-  const passages = selectedPassages();
-  if (passages.length < 1 || passages.length > 3) { $('experiment-status').textContent = 'Choose one to three raw passages.'; return; }
-  let labels;
-  try { labels = JSON.parse($('labels').value); }
-  catch (error) { $('experiment-status').textContent = 'Label JSON is invalid: ' + error.message + '. Edits and prior results are retained.'; return; }
-  const request = {dataset: lastSearch.dataset, track: lastSearch.track, text: lastSearch.packet.query.text, build_id: lastSearch.packet.build_id, instruction: $('instruction').value, labels};
-  const run = element('section', undefined, 'card'); runNumber += 1; run.append(element('h3', `Experiment run ${runNumber}`)); $('experiments').append(run);
-  setBusy(true);
-  let failures = 0;
-  try {
-    // Each passage is an independent request; one failure never discards another outcome.
-    for (let index = 0; index < passages.length; index += 1) {
-      const passageId = passages[index];
-      $('experiment-status').textContent = `Scoring passage ${index + 1} of ${passages.length} serially…`;
-      const output = element('article', undefined, 'experiment'); output.append(element('h3', passageId)); run.append(output);
-      try {
-        const response = await post('/api/decide', {...request, passage_id: passageId});
-        const packet = response.packet;
-        if (!response.ok) { failures += 1; output.append(element('p', `HTTP ${response.status}: ${errorText(packet)}`, 'error')); }
-        else output.append(element('p', `Model label: ${packet.label} (not verified truth)`));
-        if (packet.citation) output.append(citationView(packet.citation, packet.citation.id, request.dataset, true));
-        output.append(element('pre', json({label: packet.label, scores: packet.scores, timings: packet.timings})));
-        const detail = element('details'); detail.open = !response.ok;
-        detail.append(element('summary', 'Exact complete serialized input, instruction and candidate descriptions'));
-        if (typeof packet.input === 'string') detail.append(element('pre', packet.input));
-        detail.append(element('pre', json({instruction: packet.instruction ?? request.instruction, labels: packet.labels ?? request.labels})));
-        output.append(detail);
-        if (!packet.input && !response.ok) output.append(element('p', 'No classifier input was available: the request failed before passage resolution or serialization.'));
-      } catch (error) { failures += 1; output.append(element('p', error.message, 'error')); }
-    }
-    $('experiment-status').textContent = `Finished ${passages.length} independent requests; ${failures} failed. All outcomes, complete returned inputs and your edits are retained. Retrieval order is unchanged.`;
-  } finally { setBusy(false); }
-});
+$('instruction').value = defaults[$('dataset').value].instruction;
+function showPage() {
+  // The playground is its own app (playground/, prebuilt into /playground/); load it on first use.
+  const playground = location.hash === '#text-to-graph';
+  document.body.classList.toggle('playground', playground);
+  $('playground-frame').hidden = !playground;
+  if (playground && !$('playground-frame').src) $('playground-frame').src = '/playground/';
+  $('tab-search').setAttribute('aria-current', playground ? 'false' : 'page');
+  $('tab-playground').setAttribute('aria-current', playground ? 'page' : 'false');
+}
+window.addEventListener('hashchange', showPage);
+showPage();
 </script>
 </body>
 </html>

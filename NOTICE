@@ -33,6 +33,12 @@ text. Only configuration and source metadata are included in this repository.
 datasets/pizza-portland/raw/ and generated graphs containing this material
 must remain local and must not be added to public commits or releases.
 
+Text-to-graph playground
+playground/ and its prebuilt bundle in kg/web/static/playground/ are copied from
+the Antfly repository's examples/text-to-graph (Copyright 2026 Antfly, Inc.,
+written by Drew Lanenga) under the Apache License 2.0; see playground/LICENSE.
+Local changes: an ASoIaF example and the build/proxy settings for this workshop.
+
 Models and dependencies
 No model weights are bundled. Model, dependency and Antfly licenses apply
 separately. Download instructions and immutable model pins do not grant any
