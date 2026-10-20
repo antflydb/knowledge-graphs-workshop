@@ -18,7 +18,7 @@ from kg.antfly import AntflyError
 from kg.dataset_config import digest, load_dataset
 from kg.dataset_decisions import RESERVED_LABELS, DecisionError, decide, relationship_labels
 from kg.dataset_inputs import read_manifest
-from kg.search import StaleSearch, focused_search, overview
+from kg.search import StaleSearch, feed_messages, focused_search, message_view, overview
 
 ROOT = Path(__file__).resolve().parents[2]
 # Every datasets/<slug>/config.yaml; adding or deleting a dataset directory is all it takes.
@@ -39,6 +39,13 @@ class SearchRequest(BaseModel):
     focus_id: StrictStr | None = None
     build_id: StrictStr | None = None
     navigate: bool = False
+
+
+class MessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset: StrictStr
+    passage_id: StrictStr
+    build_id: StrictStr
 
 
 class DecideRequest(BaseModel):
@@ -122,6 +129,9 @@ def index(request: Request):
                               "instruction": cfg["relation_decision"]["instruction"],
                               "labels": {f"{h}|{t}": relationship_labels(cfg, h, t) for h in types for t in types},
                               "all_labels": {**{p: spec["description"] for p, spec in relations.items()}, **RESERVED_LABELS}}
+            if cfg.get("feed"):
+                titles = {row["id"]: row["title"] for row in read_manifest(cfg)}
+                defaults[name]["feed"] = {role: titles[source] for role, source in cfg["feed"].items()}
     except Exception as exc:
         return failure(exc)
     return templates.TemplateResponse(request=request, name="index.html", context={"defaults": defaults})
@@ -133,6 +143,22 @@ def landing(dataset: str):
         return overview(config(dataset))
     except Exception as exc:
         return failure(exc)
+
+
+@app.get("/api/feed")
+def feed(dataset: str):
+    try:
+        return feed_messages(config(dataset))
+    except Exception as exc:
+        return failure(exc)
+
+
+@app.post("/api/message")
+def message(body: MessageRequest):
+    try:
+        return message_view(config(body.dataset), body.passage_id, body.build_id)
+    except Exception as exc:
+        return failure(exc, stale=True)
 
 
 @app.post("/api/search")

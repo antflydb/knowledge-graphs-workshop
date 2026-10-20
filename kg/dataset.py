@@ -90,8 +90,12 @@ def entities_by_surface(af, manifest, texts, limit=100):
 
 
 def build_signature(cfg):
-    """What the indexed graph depends on: passages, extraction schema, models and table layout."""
-    files = ["dataset.py", "dataset_inputs.py", "evidence_graph.py", "schema.py"]
+    """What the indexed graph depends on: passages, extraction schema, models and table layout.
+
+    Only the code that shapes passages and the table is hashed; bump PIPELINE when
+    build() itself changes what gets written.
+    """
+    files = ["dataset_inputs.py", "evidence_graph.py", "schema.py"]
     code = [hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in files]
     return digest([PIPELINE, {key: cfg[key] for key in ("dataset", "extraction", "models", "revisions", "dimensions", "passages")},
                    cfg.get("explicit_links"), settings(cfg), code])
@@ -278,7 +282,11 @@ def main():
             info = binary_info(cfg)
             host, port = settings(cfg)["inference_url"].removeprefix("http://").rsplit(":", 1)
             print(json.dumps(info), flush=True)
-            raise SystemExit(subprocess.call([info["path"], "inference", "run", "--host", host, "--port", port]))
+            # rc.1 keeps an idle model resident for its 5-minute keep-alive even when that
+            # starves another: after Decide, query embedding is MODEL_RESOURCE_BUSY until
+            # Decide expires. Two resident models forces the least recently used out.
+            raise SystemExit(subprocess.call([info["path"], "inference", "run", "--host", host, "--port", port,
+                                              "--max-loaded-models", "2"]))
         elif args.command == "db":
             info = binary_info(cfg)
             data_dir = Path(settings(cfg)["data_dir"])

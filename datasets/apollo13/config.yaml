@@ -1,33 +1,8 @@
-version: 2
+title: Apollo 13 communications and Review Board
 passages:
   max_bytes: 550
   max_words: 75
   overlap_words: 10
-models:
-  extract: fastino/gliner2.5-base-v1
-  embed: google/embeddinggemma-2
-  decide: fastino/GLiNER2.5-Decide
-revisions:
-  extract: 72ac19b486cd4557424c8d61114e7530c243e9b0
-  embed: 914f7f89142e33e77833254d9c9b90c3cef7303b
-  decide: 7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6
-dimensions: 768
-retrieval:
-  candidates: 40
-  graph_candidates: 100
-  evidence: 5
-  text_reserve: 1
-antfly:
-  target: v0.3.0-rc.1
-  addr: 127.0.0.1:8796
-  health_port: 4296
-  binary_env: ANTFLY_BIN
-  data_dir: ../../data/antfly
-  inference_url: http://127.0.0.1:8090
-dataset: apollo13
-title: Apollo 13 communications and Review Board
-corpus: metadata.jsonl
-output: ../../data/builds/apollo13
 extraction:
   entities:
   - person
@@ -80,30 +55,9 @@ relation_decision:
     contemporaneous hypotheses are not board determinations. A report quoting an earlier
     suspicion remains suspicion. Do not infer causation from co-mention. Context is
     provenance, not extra facts; CC is a role, not one person.'
-collection:
-  kind: apollo13
-  user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)
-  request_interval_seconds: 2
-  sources:
-  - id: apollo13:air-to-ground
-    path: raw/air-to-ground.md
-    title: Apollo 13 air-to-ground transcript, MET 055:50:05–094:33:21
-    url: https://ntrs.nasa.gov/citations/20160014370
-    download_url: https://apollojournals.org/alsj/a13/AS13_TEC.txt
-    format: transcript
-    source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
-    sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
-  - id: apollo13:review-board
-    path: raw/review-board.md
-    title: Report of Apollo 13 Review Board, main report
-    url: https://ntrs.nasa.gov/citations/19700076776
-    download_url: https://ntrs.nasa.gov/api/citations/19700076776/downloads/19700076776.txt
-    format: text
-    source_sha256: 117c8efcea207aa0fb340ea238c3595a327a6b65399f86c9512c099247877dc3
-  transcript_window:
-    start: 055:50:05
-    end: 094:33:21
-    next: 094:33:31
-    encoding: windows-1252
-    source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
-    sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
+# Launch (GET 000:00:00): transcript lines are stamped with ground elapsed time from here.
+transcript_epoch: '1970-04-11T19:13:00Z'
+# The dashboard reads the transcript as a feed of messages, checked against the Board's report.
+feed:
+  messages: apollo13:air-to-ground
+  record: apollo13:review-board

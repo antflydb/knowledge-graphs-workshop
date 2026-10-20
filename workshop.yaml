@@ -1,0 +1,8 @@
+# The local Antfly runtime every dataset shares (`make db`, `make inference`).
+antfly:
+  target: v0.3.0-rc.1
+  addr: 127.0.0.1:8796
+  health_port: 4296
+  binary_env: ANTFLY_BIN
+  data_dir: data/antfly
+  inference_url: http://127.0.0.1:8090

@@ -1,0 +1,35 @@
+# What `make collect` fetches into raw/ and metadata.jsonl (pinned sources, hashes).
+kind: bundled
+user_agent: AntflyOntologyWorkshop/0.1 (bundled snapshot)
+request_interval_seconds: 1
+sources:
+- id: pr-752
+  title: "Pull request #752: fix antfarm graph edge weight query"
+  url: https://github.com/antflydb/antfly/pull/752
+  path: raw/pr-752.md
+  format: text
+- id: pr-754
+  title: "Pull request #754: fix(antfarm): omit unset graph edge weight (v0.2.x)"
+  url: https://github.com/antflydb/antfly/pull/754
+  path: raw/pr-754.md
+  format: text
+- id: pr-755
+  title: "Pull request #755: fix(antfarm): refresh embedded bundle after edge weight fix"
+  url: https://github.com/antflydb/antfly/pull/755
+  path: raw/pr-755.md
+  format: text
+- id: pr-756
+  title: "Pull request #756: fix(antfarm): refresh embedded edge weight fix (v0.2.x)"
+  url: https://github.com/antflydb/antfly/pull/756
+  path: raw/pr-756.md
+  format: text
+- id: release-v0.2.3-rc.1
+  title: "Release v0.2.3-rc.1"
+  url: https://github.com/antflydb/antfly/releases/tag/v0.2.3-rc.1
+  path: raw/release-v0.2.3-rc.1.md
+  format: text
+- id: release-v0.2.3
+  title: "Release v0.2.3"
+  url: https://github.com/antflydb/antfly/releases/tag/v0.2.3
+  path: raw/release-v0.2.3.md
+  format: text

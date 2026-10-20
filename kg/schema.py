@@ -4,6 +4,7 @@ RELATIONS_ARTIFACT = "relations_v1"
 LINKS_ARTIFACT = "links_v1"
 MENTIONS = "mentions"
 LINKS_METRIC = "links"
+MENTIONS_METRIC = "mentions"
 
 
 def _keyword():
@@ -56,10 +57,11 @@ def passage_table(cfg, table):
                             "embedder": {**inference, "model": cfg["models"]["embed"]}},
                 "graph": {"type": "graph", **sources,
                           "edge_types": [{"name": name} for name in edge_types],
-                          # Antfly maintains each node's relationship count (not passage mentions),
-                          # so the dashboard can rank the most-linked entities straight from the graph.
+                          # Antfly maintains each node's relationship count and passage-mention count,
+                          # so the dashboard reads both straight from the graph.
                           "metrics": {LINKS_METRIC: {"kind": "degree",
-                                                     "edge_filter": {"types": [t for t in edge_types if t != MENTIONS]}}},
+                                                     "edge_filter": {"types": [t for t in edge_types if t != MENTIONS]}},
+                                      MENTIONS_METRIC: {"kind": "degree", "edge_filter": {"types": [MENTIONS]}}},
                           "resolvers": [{"name": "entities", "table": table,
                                          "source_artifact": RELATIONS_ARTIFACT,
                                          "resolution_artifact": "entities_resolution_v1",

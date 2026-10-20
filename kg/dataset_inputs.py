@@ -1,7 +1,7 @@
 """Strict Markdown manifests and exact, whole-word source-offset passages."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -200,13 +200,37 @@ def source_slices(text, max_chars, turns):
             start = stop
 
 
-def _segments(row, turns=None):
+def _fits(text, *, max_bytes, max_words, **_):
+    return len(text.split()) <= max_words and len(text.encode("utf-8")) <= max_bytes
+
+
+def _turn_groups(text, turns, limits):
+    """Consecutive turns joined while they fit one passage; later timestamps and speakers stay inline."""
+    group = []
+    for turn in turns:
+        if group and _fits(text[group[0]["start_char"]:turn["end_char"]], **limits):
+            group.append(turn)
+            continue
+        if group:
+            yield group
+        group = [turn]
+    if group:
+        yield group
+
+
+def _segments(row, turns=None, limits=None):
     text, kind = row["text"], row["source_kind"]
     base = {"kind": kind, "title": row["title"]}
     if kind == "mission_transcript":
-        for turn in turns if turns is not None else transcript_turns(text):
-            context = {**base, **{k: v for k, v in turn.items() if k not in {"start_char", "end_char", "text", "marker_kind"}}}
-            yield turn["start_char"], turn["end_char"], context
+        turns = turns if turns is not None else transcript_turns(text)
+        for group in _turn_groups(text, turns, limits) if limits else ([turn] for turn in turns):
+            context = {**base, **{k: v for k, v in group[0].items() if k in {"met", "speaker", "speaker_role", "role_description"}}}
+            if len(group) > 1:
+                context.update(met_end=group[-1].get("met"), speakers=sorted({t["speaker"] for t in group if t.get("speaker")}))
+            warnings = [w for t in group for w in t.get("parse_warnings", [])]
+            if warnings:
+                context["parse_warnings"] = warnings
+            yield group[0]["start_char"], group[-1]["end_char"], context
     elif kind == "review_board":
         # OCR contains contents-page references and damaged/missing footers.
         # Cite a printed label only between consecutive uncorrected labels in
@@ -253,7 +277,13 @@ def prepare_inputs(cfg, max_passages=None):
                 "empty_turns": [{k: v for k, v in t.items() if k != "text"}
                                 for t in turns if not t["text"].strip()],
             }
-        for begin, end, context in _segments(row, turns):
+        for begin, end, context in _segments(row, turns, cfg["passages"]):
+            # Mission elapsed time (GET) plus the launch epoch gives each transcript passage a UTC time.
+            timestamp = None
+            if cfg.get("transcript_epoch") and context.get("met"):
+                hours, minutes, seconds = (int(v) for v in context["met"].split(":"))
+                launch = datetime.fromisoformat(cfg["transcript_epoch"].replace("Z", "+00:00"))
+                timestamp = (launch + timedelta(hours=hours, minutes=minutes, seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
             for local_start, local_end in windows(row["text"][begin:end], **cfg["passages"]):
                 if max_passages is not None and len(passages) >= max_passages:
                     break
@@ -261,7 +291,7 @@ def prepare_inputs(cfg, max_passages=None):
                 text = row["text"][start:stop]
                 passages.append({"id": "passage:" + digest([row["id"], row["sha256"], start, stop, text])[:24],
                                  "source_id": row["id"], "source_start": start, "source_end": stop,
-                                 "text": text, "context": context})
+                                 "text": text, "context": context, **({"timestamp": timestamp} if timestamp else {})})
             if max_passages is not None and len(passages) >= max_passages:
                 break
         if max_passages is not None and len(passages) >= max_passages:

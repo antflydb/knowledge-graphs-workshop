@@ -1,4 +1,10 @@
-"""Version-two dataset configuration, validated before any model or table is opened."""
+"""Dataset configuration, validated before any model or table is opened.
+
+A dataset is `datasets/<slug>/`: `config.yaml` holds what a person tunes (GLiNER's
+vocabulary, the Decide instruction, passage size), `collection.yaml` what `make
+collect` fetches, and the repo's `workshop.yaml` the shared local Antfly runtime.
+Everything else (model pins, retrieval sizes, paths) is fixed here.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,6 +25,11 @@ MODEL_PINS = {
     "embed": ("google/embeddinggemma-2", "914f7f89142e33e77833254d9c9b90c3cef7303b"),
     "decide": ("fastino/GLiNER2.5-Decide", "7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6"),
 }
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RETRIEVAL = {"candidates": 40, "graph_candidates": 100, "evidence": 25, "text_reserve": 1}
+TUNABLE = {"title", "passages", "extraction", "relation_decision", "explicit_links", "transcript_epoch", "feed", "dashboard"}
 
 
 def _mapping(value, allowed, required, name):
@@ -80,12 +91,23 @@ class DatasetConfig:
 def load_dataset(path):
     path = Path(path).expanduser().resolve()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    required = {"version", "dataset", "title", "corpus", "output", "passages", "extraction", "relation_decision", "models", "revisions", "dimensions", "retrieval", "antfly", "collection"}
-    _mapping(data, required | {"explicit_links", "dashboard"}, required, "config")
+    _mapping(data, TUNABLE, {"title", "passages", "extraction", "relation_decision"}, "config")
+    runtime = yaml.safe_load((ROOT / "workshop.yaml").read_text(encoding="utf-8"))
+    _mapping(runtime, {"antfly"}, {"antfly"}, "workshop.yaml")
+    runtime["antfly"]["data_dir"] = str((ROOT / runtime["antfly"]["data_dir"]).resolve())
+    data = {"version": 2, "dataset": path.parent.name, "corpus": "metadata.jsonl", "output": f"../../data/builds/{path.parent.name}",
+            "models": {role: pin[0] for role, pin in MODEL_PINS.items()}, "revisions": {role: pin[1] for role, pin in MODEL_PINS.items()},
+            "dimensions": 768, "retrieval": dict(RETRIEVAL), "antfly": runtime["antfly"],
+            "collection": yaml.safe_load((path.parent / "collection.yaml").read_text(encoding="utf-8")), **data}
     if type(data.get("dashboard", True)) is not bool:
         raise ValueError("dashboard must be true or false")
-    if data["version"] != 2:
-        raise ValueError("Require dataset config version: 2")
+    if "transcript_epoch" in data and not (isinstance(data["transcript_epoch"], str)
+                                           and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", data["transcript_epoch"])):
+        raise ValueError("transcript_epoch must be a UTC time like 1970-04-11T19:13:00Z")
+    if "feed" in data:
+        _mapping(data["feed"], {"messages", "record"}, {"messages", "record"}, "feed")
+        for key in ("messages", "record"):
+            _text(data["feed"][key], f"feed.{key}")
     if not isinstance(data["dataset"], str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", data["dataset"]):
         raise ValueError("dataset must be a lowercase hyphen-separated slug")
     for key in ("title", "corpus", "output"):
@@ -116,18 +138,6 @@ def load_dataset(path):
                 raise ValueError(f"Unknown endpoint types in {name}.{endpoint}")
     _mapping(data["relation_decision"], {"instruction"}, {"instruction"}, "relation_decision")
     _text(data["relation_decision"]["instruction"], "relation_decision.instruction")
-    for group, index in (("models", 0), ("revisions", 1)):
-        _mapping(data[group], MODEL_PINS, MODEL_PINS, group)
-        if any(data[group][role] != pin[index] for role, pin in MODEL_PINS.items()):
-            raise ValueError(f"{group} must retain the qualified immutable model pins")
-    if data["dimensions"] != 768 or type(data["dimensions"]) is not int:
-        raise ValueError("dimensions must be 768 for the pinned embedding model")
-    r = data["retrieval"]
-    _mapping(r, {"candidates", "graph_candidates", "evidence", "text_reserve"}, {"candidates", "graph_candidates", "evidence", "text_reserve"}, "retrieval")
-    for key in ("candidates", "graph_candidates", "evidence"):
-        _positive(r[key], f"retrieval.{key}")
-    if type(r["text_reserve"]) is not int or not 0 <= r["text_reserve"] < r["evidence"] <= r["candidates"]:
-        raise ValueError("Require 0 <= text_reserve < evidence <= candidates")
     runtime = data["antfly"]
     fields = {"target", "addr", "health_port", "binary_env", "data_dir", "inference_url"}
     _mapping(runtime, fields, fields, "antfly")

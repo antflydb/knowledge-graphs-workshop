@@ -1,0 +1,27 @@
+# What `make collect` fetches into raw/ and metadata.jsonl (pinned sources, hashes).
+kind: apollo13
+user_agent: AntflyOntologyWorkshop/0.1 (fixed text corpus; https://github.com/antflydb)
+request_interval_seconds: 2
+sources:
+- id: apollo13:air-to-ground
+  path: raw/air-to-ground.md
+  title: Apollo 13 air-to-ground transcript, MET 055:50:05–094:33:21
+  url: https://ntrs.nasa.gov/citations/20160014370
+  download_url: https://apollojournals.org/alsj/a13/AS13_TEC.txt
+  format: transcript
+  source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
+  sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
+- id: apollo13:review-board
+  path: raw/review-board.md
+  title: Report of Apollo 13 Review Board, main report
+  url: https://ntrs.nasa.gov/citations/19700076776
+  download_url: https://ntrs.nasa.gov/api/citations/19700076776/downloads/19700076776.txt
+  format: text
+  source_sha256: 117c8efcea207aa0fb340ea238c3595a327a6b65399f86c9512c099247877dc3
+transcript_window:
+  start: 055:50:05
+  end: 094:33:21
+  next: 094:33:31
+  encoding: windows-1252
+  source_sha256: 31a81800dadb71fc4dacc2261f16bdc8c58499125949d828f83322a99fdb49ba
+  sha256: 4871b232b6e80c35a59ac2452aa1369f2f079cb7975179561b5a5c3fb30b4544
