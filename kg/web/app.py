@@ -15,16 +15,13 @@ from pydantic import BaseModel, ConfigDict, StrictStr
 
 from kg import dataset
 from kg.antfly import AntflyError
-from kg.dataset_config import digest, load_dataset
+from kg.dataset_config import dashboard_datasets, digest, load_dataset
 from kg.dataset_decisions import RESERVED_LABELS, DecisionError, decide, relationship_labels
 from kg.dataset_inputs import read_manifest
 from kg.search import StaleSearch, feed_messages, focused_search, message_view, overview
 
-ROOT = Path(__file__).resolve().parents[2]
-# Every datasets/<slug>/config.yaml; adding or deleting a dataset directory is all it takes.
+# Every datasets/<slug>/config.yaml, read on each request: a new dataset shows up on reload.
 # `dashboard: false` in a config keeps a dataset buildable from the CLI but off the page.
-DATASETS = {path.parent.name: path for path in sorted((ROOT / "datasets").glob("*/config.yaml"))
-            if load_dataset(path).data.get("dashboard", True)}
 LABELS = {"asoiaf": "ASoIaF", "pizza-portland": "Portland pizza", "apollo13": "Apollo 13",
           "antfly-prs": "Antfly PRs: edge-weight fix"}
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -97,9 +94,10 @@ app.mount("/playground", StaticFiles(directory=PLAYGROUND, html=True), name="pla
 
 
 def config(name):
-    if name not in DATASETS:
-        raise HTTPException(422, f"Select one of: {', '.join(DATASETS)}")
-    return load_dataset(DATASETS[name]).data
+    datasets = dashboard_datasets()
+    if name not in datasets:
+        raise HTTPException(422, f"Select one of: {', '.join(datasets)}")
+    return load_dataset(datasets[name]).data
 
 
 def failure(exc, *, stale=False):
@@ -120,8 +118,8 @@ def failure(exc, *, stale=False):
 def index(request: Request):
     defaults = {}
     try:
-        for name in DATASETS:
-            cfg = config(name)
+        for name, path in dashboard_datasets().items():
+            cfg = load_dataset(path).data
             types, relations = cfg["extraction"]["entities"], cfg["extraction"]["relations"]
             # Decide's pre-filled boxes: the instruction, and the labels for each (HEAD, TAIL) type pair.
             defaults[name] = {"title": cfg["title"], "label": LABELS.get(name, cfg["title"]),
@@ -193,7 +191,7 @@ def decision(body: DecideRequest):
 @app.api_route("/ai/{path:path}", methods=["GET", "POST"])
 async def inference(path: str, request: Request):
     """Forward the playground's inference calls to Antfly, keeping the page same-origin."""
-    base = load_dataset(DATASETS["asoiaf"]).data["antfly"]["inference_url"]
+    base = config(next(iter(dashboard_datasets())))["antfly"]["inference_url"]
     async with httpx.AsyncClient(base_url=base, timeout=300) as client:
         try:
             upstream = await client.request(request.method, f"/ai/{path}", content=await request.body(),

@@ -2,7 +2,8 @@
 
 A dataset is `datasets/<slug>/`: `config.yaml` holds what a person tunes (GLiNER's
 vocabulary, the Decide instruction, passage size), `collection.yaml` what `make
-collect` fetches, and the repo's `workshop.yaml` the shared local Antfly runtime.
+collect` fetches (optional: without it, every `raw/*.md` file is a local source), and
+the repo's `workshop.yaml` the shared local Antfly runtime.
 Everything else (model pins, retrieval sizes, paths) is fixed here.
 """
 from __future__ import annotations
@@ -30,6 +31,25 @@ MODEL_PINS = {
 ROOT = Path(__file__).resolve().parents[1]
 RETRIEVAL = {"candidates": 40, "graph_candidates": 100, "evidence": 25, "text_reserve": 1}
 TUNABLE = {"title", "passages", "extraction", "relation_decision", "explicit_links", "transcript_epoch", "feed", "dashboard"}
+
+
+def _local_collection(root):
+    """Every Markdown file under raw/ as a bundled source, titled by its front-matter title or first heading."""
+    sources = []
+    for file in sorted((root / "raw").rglob("*.md")):
+        relative, text = file.relative_to(root).as_posix(), file.read_text(encoding="utf-8")
+        front = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        titled = re.search(r"(?m)^title:\s*['\"]?(.+?)['\"]?\s*$", front.group(1)) if front else None
+        heading = titled.group(1) if titled else next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), "")
+        sources.append({"id": root.name + ":" + re.sub(r"[^A-Za-z0-9._-]+", "-", relative[len("raw/"):-len(".md")]),
+                        "path": relative, "title": heading or file.stem.replace("_", " ").replace("-", " "), "format": "text"})
+    return {"kind": "bundled", "user_agent": "local files", "request_interval_seconds": 1, "sources": sources}
+
+
+def dashboard_datasets():
+    """Every datasets/<slug>/config.yaml the dashboard shows, by slug (read fresh each call)."""
+    return {path.parent.name: path for path in sorted((ROOT / "datasets").glob("*/config.yaml"))
+            if load_dataset(path).data.get("dashboard", True)}
 
 
 def _mapping(value, allowed, required, name):
@@ -95,10 +115,12 @@ def load_dataset(path):
     runtime = yaml.safe_load((ROOT / "workshop.yaml").read_text(encoding="utf-8"))
     _mapping(runtime, {"antfly"}, {"antfly"}, "workshop.yaml")
     runtime["antfly"]["data_dir"] = str((ROOT / runtime["antfly"]["data_dir"]).resolve())
+    collection_file = path.parent / "collection.yaml"
     data = {"version": 2, "dataset": path.parent.name, "corpus": "metadata.jsonl", "output": f"../../data/builds/{path.parent.name}",
             "models": {role: pin[0] for role, pin in MODEL_PINS.items()}, "revisions": {role: pin[1] for role, pin in MODEL_PINS.items()},
             "dimensions": 768, "retrieval": dict(RETRIEVAL), "antfly": runtime["antfly"],
-            "collection": yaml.safe_load((path.parent / "collection.yaml").read_text(encoding="utf-8")), **data}
+            "collection": yaml.safe_load(collection_file.read_text(encoding="utf-8")) if collection_file.exists() else _local_collection(path.parent),
+            **data}
     if type(data.get("dashboard", True)) is not bool:
         raise ValueError("dashboard must be true or false")
     if "transcript_epoch" in data and not (isinstance(data["transcript_epoch"], str)
@@ -169,8 +191,10 @@ def load_dataset(path):
         raise ValueError("collection.sources must be a nonempty fixed inventory")
     ids, paths = set(), set()
     for source in collection["sources"]:
-        _mapping(source, {"id", "path", "title", "url", "download_url", "format", "restaurant_id", "roles", "page_id", "revision_id", "revision_url", "source_sha256", "sha256"}, {"id", "path", "title", "url", "format"}, "collection source")
-        for key in ("id", "path", "title", "url", "format"):
+        # Local (bundled) files need no URL; fetched sources do.
+        required = {"id", "path", "title", "format"} | (set() if collection["kind"] == "bundled" else {"url"})
+        _mapping(source, {"id", "path", "title", "url", "download_url", "format", "restaurant_id", "roles", "page_id", "revision_id", "revision_url", "source_sha256", "sha256"}, required, "collection source")
+        for key in required:
             _text(source[key], f"source.{key}")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]*", source["id"]):
             raise ValueError(f"Source ID must be a safe nonempty identifier: {source['id']}")

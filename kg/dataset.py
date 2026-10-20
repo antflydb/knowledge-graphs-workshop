@@ -98,7 +98,9 @@ def build_signature(cfg):
     files = ["dataset_inputs.py", "evidence_graph.py", "schema.py"]
     code = [hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in files]
     return digest([PIPELINE, {key: cfg[key] for key in ("dataset", "extraction", "models", "revisions", "dimensions", "passages")},
-                   cfg.get("explicit_links"), settings(cfg), code])
+                   # Only the Antfly release, not this machine's ports or data path, so a
+                   # database built elsewhere (`make fetch-db`) is still current here.
+                   cfg.get("explicit_links"), {"target": settings(cfg)["target"]}, code])
 
 
 def prepare(cfg, max_passages=None):
@@ -145,7 +147,7 @@ def build(cfg, max_passages=None):
     try:
         existing = af.list_tables()
         if table in existing:
-            if old.get("content_hash") != content_hash or old.get("url") != str(af.http.base_url):
+            if old.get("content_hash") != content_hash:
                 raise ValueError("Existing table has no matching completed build receipt; use a fresh database")
         else:
             af.create_table(table, passage_table(cfg, table))

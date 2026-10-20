@@ -1,0 +1,68 @@
+# A starting point for your own documents (`make new DATASET=<slug>` copies it).
+# Put Markdown files in datasets/<slug>/raw/, then: make collect build DATASET=<slug>
+# Tune the vocabulary below and rebuild; the dashboard picks up the new build on reload.
+title: My documents
+passages:
+  max_bytes: 550
+  max_words: 75
+  overlap_words: 10
+extraction:
+  # What GLiNER looks for: short, concrete, lowercase types work best.
+  entities:
+  - person
+  - organization
+  - place
+  - product
+  - event
+  # Mentions below this confidence don't become nodes.
+  threshold: 0.5
+  # Antfly's extractor sees only the relation names. Descriptions and head/tail types
+  # are what Decide uses when you ask it about one relationship in the dashboard.
+  relations:
+    works_for:
+      description: HEAD person works for, leads or is a member of TAIL organization.
+      head_types:
+      - person
+      tail_types:
+      - organization
+    part_of:
+      description: HEAD is a part, unit or subdivision of TAIL.
+      head_types:
+      - organization
+      - place
+      tail_types:
+      - organization
+      - place
+    located_in:
+      description: HEAD is located in or takes place in TAIL place.
+      head_types:
+      - organization
+      - event
+      - place
+      tail_types:
+      - place
+    created:
+      description: HEAD person or organization made, built or released TAIL product.
+      head_types:
+      - person
+      - organization
+      tail_types:
+      - product
+    participated_in:
+      description: HEAD person or organization took part in TAIL event.
+      head_types:
+      - person
+      - organization
+      tail_types:
+      - event
+    associated_with:
+      description: HEAD and TAIL are connected, but no more specific relationship above is stated.
+      head_types:
+      - person
+      - organization
+      tail_types:
+      - person
+      - organization
+relation_decision:
+  instruction: Choose the relationship this passage states between the ordered HEAD and TAIL.
+    Respect direction, negation and uncertainty. Do not use outside knowledge.

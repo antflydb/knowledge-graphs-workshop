@@ -10,6 +10,7 @@ live from whatever sentences you type.
 |---|---|
 | `asoiaf` | 56 frozen Wikipedia articles (CC BY-SA 4.0, bundled) |
 | `apollo13` | NASA air-to-ground transcript and Review Board report (bundled) |
+| `antfly-prs` | Four Antfly pull requests and two release notes, timestamped (bundled) |
 | `pizza-portland` | Menus and about pages for 11 Portland pizzerias (not bundled; see below) |
 
 ## Run
@@ -25,13 +26,28 @@ antfly inference pull "fastino/GLiNER2.5-Decide:safetensors@7ee5da4c2415e32259bc
 
 make inference    # terminal 1: native inference on :8090
 make db           # terminal 2: Antfly on :8796
-make build        # ~5 min for ASoIaF on an Apple-silicon Mac; DATASET=apollo13 for the other corpus
+make build-all    # ~8 min on an Apple-silicon Mac (or, before `make db`: make fetch-db, ~200 MB)
 make web          # http://127.0.0.1:8000 (graph search and text-to-graph tabs)
 ```
 
-`make` lists every target. [datasets/README.md](datasets/README.md) covers the CLI,
+After editing any `datasets/*/config.yaml`, `make build-all` rebuilds what changed;
+unchanged datasets reuse their table. Reload the page to see it. `make` lists every target. [datasets/README.md](datasets/README.md) covers the CLI,
 inputs and generated state. The text-to-graph tab is prebuilt from
 [`playground/`](playground/); rebuilding it (`make playground`) is optional and needs pnpm.
+
+## Your own documents
+
+```sh
+make new DATASET=my-docs                 # datasets/my-docs/config.yaml from a template
+cp ~/notes/*.md datasets/my-docs/raw/     # Markdown (or plain text saved as .md)
+make collect build DATASET=my-docs       # record the files, then build the graph
+```
+
+Reload the page and pick it from the dataset menu. Then tune `config.yaml` (the entity
+types and relations GLiNER looks for are most of it) and `make build DATASET=my-docs`
+again. Titles come from each file's front-matter `title:` or first `# ` heading; add
+`timestamp` or `url` to a file's row in `metadata.jsonl` and they show up on its
+passages.
 
 ## How it's stored
 
@@ -59,8 +75,8 @@ ASoIaF: 4,641 passages, 2,891 entities and 33,385 edges.
   mislabels close associates as family ("Jorah sibling of Daenerys"); the votes and
   evidence make that visible.
 - **Identity:** an entity is its slugged surface form. "Tyrion's" merges into "Tyrion",
-  but "Tyrion" and "Tyrion Lannister" stay separate. The page lists every matching
-  name group so you can see the split.
+  but "Tyrion" and "Tyrion Lannister" stay separate. The page lists nodes with similar
+  names so you can see the split.
 - **Decide:** "Ask Decide" in the evidence panel re-classifies one relationship with
   GLiNER2.5-Decide on demand. Nothing is written back.
 

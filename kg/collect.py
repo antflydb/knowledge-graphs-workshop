@@ -163,12 +163,33 @@ def _atomic_text(path, text):
     temporary.replace(path)
 
 
+def _record_local(cfg, refresh):
+    """Local files: nothing to fetch. Record any file not yet in metadata.jsonl (or, with
+    --refresh, re-hash every file), keeping hand-added fields such as timestamp or url."""
+    manifest, sources = Path(cfg["corpus"]), cfg["collection"]["sources"]
+    rows = {r["id"]: r for r in (read_jsonl(manifest) if manifest.exists() else [])}
+    changed = 0
+    for source in sources:
+        path = raw_path(cfg, source["path"])
+        if source["id"] in rows and not refresh:
+            continue
+        stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        rows[source["id"]] = {"id": source["id"], "path": source["path"], "title": source["title"],
+                              "url": source.get("url", "local:" + source["path"]), "media_type": "text/markdown",
+                              "license": None, "attribution": "Local file supplied with this dataset",
+                              "redistribution": "permission_not_verified", "source_kind": "document",
+                              **rows.get(source["id"], {}), "sha256": sha(path.read_bytes()), "fetched_at": stamp}
+        changed += 1
+    if changed or set(rows) != {s["id"] for s in sources}:
+        _atomic_text(manifest, "".join(json.dumps(rows[s["id"]], ensure_ascii=False) + "\n" for s in sources))
+    return {"bundled": True, "sources": len(read_manifest(cfg)), "recorded": changed}
+
+
 def collect(cfg, refresh=False):
     cfg = _data(cfg)
     settings = cfg["collection"]
     if settings["kind"] == "bundled":
-        # Checked-in sources: nothing to fetch, only verify the snapshot.
-        return {"bundled": True, "sources": len(read_manifest(cfg))}
+        return _record_local(cfg, refresh)
     manifest = Path(cfg["corpus"])
     existing = read_jsonl(manifest) if manifest.exists() else []
     if len({r.get("id") for r in existing}) != len(existing):
