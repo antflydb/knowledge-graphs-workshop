@@ -26,7 +26,7 @@ antfly inference pull "fastino/GLiNER2.5-Decide:safetensors@7ee5da4c2415e32259bc
 
 make inference    # terminal 1: native inference on :8090
 make db           # terminal 2: Antfly on :8796
-make build-all    # ~8 min on an Apple-silicon Mac (or, before `make db`: make fetch-db, ~200 MB)
+make build-all    # ~8 min on an Apple-silicon Mac (or, before `make db`: make fetch-db, ~350 MB)
 make web          # http://127.0.0.1:8000 (graph search and text-to-graph tabs)
 ```
 
