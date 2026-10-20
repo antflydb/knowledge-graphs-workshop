@@ -5,4 +5,5 @@ antfly:
   health_port: 4296
   binary_env: ANTFLY_BIN
   data_dir: data/antfly
+  # Tables record this URL when built, so the prebuilt database (`make fetch-db`) expects :8090.
   inference_url: http://127.0.0.1:8090

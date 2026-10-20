@@ -15,25 +15,30 @@ live from whatever sentences you type.
 
 ## Run
 
-Needs `uv`, Python 3.12 and Antfly **v0.3.0-rc.1**. Set `ANTFLY_BIN` if the `antfly`
-on your `PATH` is older.
-
 ```sh
-uv sync
-antfly inference pull "fastino/gliner2.5-base-v1:safetensors@72ac19b486cd4557424c8d61114e7530c243e9b0"
-antfly inference pull "google/embeddinggemma-2:safetensors@914f7f89142e33e77833254d9c9b90c3cef7303b" --tasks embed
-antfly inference pull "fastino/GLiNER2.5-Decide:safetensors@7ee5da4c2415e32259bcdc0b1a7367c32ce8d6f6" --tasks extract
-
-make inference    # terminal 1: native inference on :8090
-make db           # terminal 2: Antfly on :8796
-make build-all    # ~8 min on an Apple-silicon Mac (or, before `make db`: make fetch-db, ~350 MB)
-make web          # http://127.0.0.1:8000 (graph search and text-to-graph tabs)
+npm install -g @antfly/cli@next    # Antfly v0.3.0-rc.1
+git clone https://github.com/antflydb/knowledge-graphs-workshop && cd knowledge-graphs-workshop
+make up                            # then open http://127.0.0.1:8000; Ctrl-C stops everything
 ```
 
-After editing any `datasets/*/config.yaml`, `make build-all` rebuilds what changed;
-unchanged datasets reuse their table. Reload the page to see it. `make` lists every target. [datasets/README.md](datasets/README.md) covers the CLI,
-inputs and generated state. The text-to-graph tab is prebuilt from
-[`playground/`](playground/); rebuilding it (`make playground`) is optional and needs pnpm.
+`make up` also needs [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+Without npm, install Antfly with
+`curl -fsSL https://releases.antfly.io/antfly/latest/install.sh | sh -s -- v0.3.0-rc.1`
+(macOS arm64 or Linux), or unpack a binary from the
+[v0.3.0-rc.1 release](https://github.com/antflydb/antfly/releases/tag/v0.3.0-rc.1). If an older
+`antfly` comes first on your `PATH`, set `ANTFLY_BIN` to the rc.1 binary.
+
+The first run pulls GLiNER2.5 and EmbeddingGemma 2 (about 2 GB) and a prebuilt database
+(about 350 MB); after that it starts in seconds. `make up BUILD=1` builds the graph on
+your machine instead of downloading it (about 8 minutes on an Apple-silicon Mac). The
+Decide drawer needs one more model: stop `make up`, run `make decide` (1.8 GB), start again.
+
+After editing a `datasets/*/config.yaml`, restart `make up` (or run `make build-all`
+alongside it): changed datasets rebuild, the rest are reused. Server logs are in
+`data/logs/`, and `make` lists the step-by-step targets. [datasets/README.md](datasets/README.md)
+covers the CLI, inputs and generated state. Coding agents: see [AGENTS.md](AGENTS.md).
+The text-to-graph tab is prebuilt from [`playground/`](playground/); rebuilding it
+(`make playground`) is optional and needs pnpm.
 
 ## Your own documents
 

@@ -12,7 +12,7 @@ import subprocess
 import time
 
 import httpx
-from kg.antfly import Antfly, hits
+from kg.antfly import Antfly, AntflyError, hits
 from kg.dataset_config import digest, load_dataset
 from kg.dataset_inputs import prepare_inputs, read_manifest
 from kg.dataset_decisions import query_entities
@@ -21,6 +21,7 @@ from kg.schema import MENTIONS, passage_table
 
 PIPELINE = 4
 READY_TIMEOUT_SECONDS = 3600
+INSTALL_HINT = "npm install -g @antfly/cli@next, or: curl -fsSL https://releases.antfly.io/antfly/latest/install.sh | sh -s -- v0.3.0-rc.1"
 
 
 def settings(cfg):
@@ -49,7 +50,7 @@ def native_binary(configured):
         raise ValueError(f"ANTFLY_BIN does not exist: {path}")
     resolved = shutil.which("antfly")
     if not resolved:
-        raise ValueError("Install the Antfly CLI or set ANTFLY_BIN to a v0.3 native binary")
+        raise ValueError(f"Antfly v0.3.0-rc.1 is not installed ({INSTALL_HINT}); or set ANTFLY_BIN to its binary")
     # Resolve npm's native package without invoking its Node server wrapper.
     actual = Path(resolved).resolve()
     if actual.suffix in {".js", ".mjs", ".cjs"} or b"node" in actual.open("rb").read(100):
@@ -72,7 +73,7 @@ def binary_info(cfg):
     # Artifact-backed graph indexes, extractor enrichments and resolvers first shipped in v0.3.
     if not re.search(r"\b0\.(?:[3-9]|\d{2,})\.\d+", version):
         raise ValueError(f"The workshop requires Antfly {runtime['target']} or later; {path} reports {version!r}. "
-                         f"Set {runtime['binary_env']} to a v0.3 binary.")
+                         f"Install it ({INSTALL_HINT}) or set {runtime['binary_env']} to a v0.3 binary.")
     return {"path": path, "version": version, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
 
 
@@ -156,7 +157,16 @@ def build(cfg, max_passages=None):
                 af.batch(table, dict(items[offset:offset + 100]), sync_level="write")
             print(f"Wrote {len(prepared['passages'])} passages ({len(items)} documents) to {table}", flush=True)
         statuses = wait_until_complete(af, table, ("vectors", "graph"))
-        observed = hits(af.query(table, search_request(cfg, probe["text"])))
+        # Just after inference starts the embedder may still be loading; that is retryable.
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                observed = hits(af.query(table, search_request(cfg, probe["text"])))
+                break
+            except AntflyError as exc:
+                if "temporarily_unavailable" not in str(exc) or time.monotonic() > deadline:
+                    raise
+                time.sleep(2)
         if probe["id"] not in {h["_id"] for h in observed} or af.get(table, probe["id"]) is None:
             raise ValueError("Indexed passage probe failed; previous receipt is unchanged")
         manifest = {"pipeline": PIPELINE, "dataset": cfg["dataset"], "target": settings(cfg)["target"], "binary": binary,

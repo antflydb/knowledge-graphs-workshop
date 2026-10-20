@@ -185,6 +185,10 @@ def decision(body: DecideRequest):
         try:
             return decide(state.provider(config(body.dataset)), body.input, body.instruction, body.labels)
         except Exception as exc:
+            # Decide is optional; say how to get it rather than surface the inference error.
+            message = str(exc).lower()
+            if "model_not_found" in message or "model not found" in message:
+                return JSONResponse({"error": "Decide isn't installed. Run `make decide` (1.8 GB), then try again."}, status_code=503)
             return failure(exc)
 
 

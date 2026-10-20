@@ -7,9 +7,13 @@ RUN = uv run python -m kg.dataset $(CONFIG)
 # Every dataset the dashboard shows (no `dashboard: false`).
 DASHBOARD = uv run python -c 'from kg.dataset_config import dashboard_datasets; print(*dashboard_datasets())'
 
-.PHONY: help new collect validate prepare doctor inference db build build-all fetch-db query web playground test
+.PHONY: help up decide new collect validate prepare doctor inference db build build-all fetch-db query web playground test
 help:
 	@printf '%s\n' 'Antfly v0.3.0-rc.1 (set ANTFLY_BIN if `antfly` on PATH is older)' \
+		'make up                        # everything in one terminal: models, database, dashboard (Ctrl-C stops)' \
+		'                               # (BUILD=1 builds the graph here instead of downloading it)' \
+		'make decide                    # optional: pull GLiNER2.5-Decide (1.8 GB) for the Decide drawer (while make up is stopped)' \
+		'-- or step by step --' \
 		'make inference                 # native inference on :8090 (leave running)' \
 		'make db                        # Antfly server on :8796 (leave running)' \
 		'make collect|validate|prepare|doctor|build DATASET=asoiaf' \
@@ -18,6 +22,11 @@ help:
 		'make fetch-db                  # download the prebuilt database instead (before the first make db)' \
 		'make query TEXT="question"' 'make web WEB_PORT=8000' 'make test' \
 		'make playground                # optional: rebuild the prebuilt text-to-graph page (needs pnpm)'
+up:
+	@command -v uv >/dev/null || { echo "make up needs uv: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+	BUILD=$(BUILD) DECIDE=$(DECIDE) WEB_PORT=$(WEB_PORT) uv run python -m kg.up
+decide:
+	uv run python -c 'from kg.up import pull; pull("decide")'
 collect:
 	$(RUN) collect
 validate:
