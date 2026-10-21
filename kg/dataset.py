@@ -305,6 +305,13 @@ def main():
             data_dir.mkdir(parents=True, exist_ok=True)
             print(json.dumps(info), flush=True)
             host, port = settings(cfg)["addr"].rsplit(":", 1)
+            # The database keeps tens of thousands of files; macOS terminals default to 256
+            # open files, which leaves indexes stuck at queryable_partial (ProcessFdQuotaExceeded).
+            import resource
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            wanted = 65536 if hard == resource.RLIM_INFINITY else min(65536, hard)
+            if soft != resource.RLIM_INFINITY and soft < wanted:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
             # The default storage engine: artifact-backed graph and embedding workers
             # fail permanently under bulk load on rc.1's Lite engine.
             raise SystemExit(subprocess.call([info["path"], "standalone", "--data-dir", str(data_dir), "--host", host,
